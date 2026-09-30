@@ -3,10 +3,12 @@ import { LATITUDE, LONGITUDE } from './location.js';
 
 const CACHE_NAME = 'sunTimes';
 
-// Fields to keep from the sunrise-sunset.org response
+// Fields to keep from the sunrise-sunset.org response. `dusk` is the end of
+// civil twilight, when the sun is 6° below the horizon.
 const SUN_FIELDS = [
   'sunrise',
   'sunset',
+  'dusk',
   'astronomical_twilight_begin',
   'astronomical_twilight_end',
 ];
@@ -15,12 +17,13 @@ const SUN_FIELDS = [
  * Returns today's sun times as { date, times }, where `date` is the date the
  * cache was refreshed (YYYY-MM-DD) and `times` holds an ISO 8601 time, in the
  * location's timezone, for each field. A time is null if that event does not
- * happen that day. Data comes from the cache unless it is from an earlier date.
+ * happen that day. Data comes from the cache unless it is from an earlier date
+ * or is missing a field.
  */
 export async function GetSunTimes() {
   const today = getTodaysDate();
   const cached = await readCache(CACHE_NAME);
-  if (cached?.date === today) {
+  if (cached?.date === today && SUN_FIELDS.every((field) => field in cached.times)) {
     return cached;
   }
 

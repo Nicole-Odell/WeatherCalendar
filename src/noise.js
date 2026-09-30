@@ -16,6 +16,24 @@ function buildPermutation(seed) {
   return table;
 }
 
+// The gradient for each hash (its lowest 3 bits), as used by `gradient`
+const GRADIENTS = [[1, 1], [1, -1], [-1, 1], [-1, -1], [1, 0], [-1, 0], [0, 1], [0, -1]];
+
+/**
+ * The permutation table as an RGBA image 512 × 1, for computing the same noise
+ * on the GPU: red is the table's value at each position, and green and blue
+ * are the gradient for that value, each stored as (g + 1) × 127, so -1, 0 and
+ * 1 are exact.
+ */
+export function permutationImage() {
+  const image = new Uint8Array(512 * 4);
+  for (let i = 0; i < 512; i++) {
+    const [gx, gy] = GRADIENTS[PERMUTATION[i] & 7];
+    image.set([PERMUTATION[i], (gx + 1) * 127, (gy + 1) * 127, 255], i * 4);
+  }
+  return image;
+}
+
 // Noise at (x, y), from about -1 to 1, changing smoothly over a distance of about 1
 function perlin(x, y) {
   const x0 = Math.floor(x);

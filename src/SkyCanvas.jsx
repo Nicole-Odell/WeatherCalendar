@@ -1,34 +1,43 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createCloudRenderer } from './cloudsGL.js';
 import { readableTextColor } from './color.js';
 import {
+  drawStars,
   renderClouds,
   renderHazeColumn,
   renderSkyColumn,
   renderStarGlow,
-  renderStars,
+  starColors,
 } from './skyImage.js';
 
 // Share of the window's resolution the clouds are drawn at. The browser smooths
 // them up to full size, which suits soft clouds and keeps drawing fast.
 const CLOUD_RENDER_SCALE = 0.25;
+// Width in pixels the scene's average color is worked out at (for the text color)
+const AVERAGE_WIDTH = 64;
 // Width in pixels the star glow is drawn at before being smoothed up
 const STAR_GLOW_WIDTH = 240;
 // How often a new frame of cloud motion is drawn (ms), faded in over the same time
 const CLOUD_INTERVAL = 250;
-// How long changes to the settings take to fade in (ms)
-const SETTINGS_FADE = 300;
+// Cloud motion only runs if the GPU draws a cloud frame within this many ms,
+// leaving it plenty of time for everything else between frames
+const CLOUD_ANIMATION_BUDGET = 50;
 
 /**
  * The sky, stars, clouds and haze, drawn behind the page on three canvases
  * stacked with normal blending:
- * 1. The sky, with the stars added over it with a screen blend. It only
- *    changes when the settings do.
- * 2. The cloud layers, with a new frame of their motion every CLOUD_INTERVAL.
- * 3. The haze, which only changes when the settings do.
- * Each new frame fades in from what's showing. Only pixels that differ between
- * the two frames change, and each moves straight from its old value to its new
- * one, so layers that aren't changing stay exactly as they are. Reports the
- * text color that's easiest to read over the scene through onTextColor.
+ * 1. The sky, with the stars added over it with a screen blend
+ * 2. The cloud layers, drawn with WebGL (or on the CPU without it)
+ * 3. The haze
+ * Each redraw fades in over `fadeDuration` ms from what's showing. Only pixels
+ * that differ between the two frames change, and each moves straight from its
+ * old value to its new one, so layers that aren't changing stay exactly as
+ * they are. The stars are only redrawn when their colors change.
+ *
+ * Cloud motion (a new frame every CLOUD_INTERVAL ms) only runs with WebGL, and
+ * only if the GPU is fast enough; otherwise the clouds stay still. Reports the
+ * text color that's easiest to read over the scene through onTextColor, and
+ * how drawing is going (renderer, timings) through onStatus.
  */
 export default function SkyCanvas(props) {
   const backgroundRef = useRef(null);
@@ -41,21 +50,32 @@ export default function SkyCanvas(props) {
       sky: createLayer(offScreen()),
       clouds: createLayer(null),
       haze: createLayer(null),
-      // Star frames: what was showing, the new frame, and the blend being shown
+      // Star frames: what was showing, the new frame, and the blend being shown,
+      // plus the star colors and glow shown (to tell when they change)
       stars: {
         from: offScreen(),
         to: offScreen(),
         shown: offScreen(),
         fade: { start: 0, duration: 1 },
         fading: false,
+        colors: null,
+        glow: null,
       },
+      // WebGL cloud drawing, once set up (null if it can't be)
+      cloudRenderer: undefined,
+      cloudFrameMs: null,
+      // The clouds' own clock (seconds), which sets where they've drifted to,
+      // and the real time it was last moved on at
+      cloudClock: Date.now() / 1000,
+      cloudClockUpdated: Date.now() / 1000,
       animationFrame: 0,
     };
   }
   const [windowSize, setWindowSize] = useState(currentWindowSize);
+  const [animating, setAnimating] = useState(false);
   // The latest props, for drawing cloud frames
   const latest = useRef(null);
-  latest.current = { ...props, windowSize };
+  latest.current = { ...props, windowSize, animating };
 
   useEffect(() => {
     const onResize = () => setWindowSize(currentWindowSize());
@@ -65,17 +85,19 @@ export default function SkyCanvas(props) {
 
   // Shows each fade as of now, continuing each animation frame until they're done
   const paint = useCallback(() => {
-    const { sky, clouds, haze, stars } = state.current;
+    const { sky, clouds, haze, stars, cloudRenderer } = state.current;
     const now = performance.now();
     let fading = false;
 
-    for (const layer of [sky, clouds, haze]) {
+    const layers = cloudRenderer ? [sky, haze] : [sky, clouds, haze];
+    for (const layer of layers) {
       if (layer.changes.length === 0) continue;
       const progress = fadeProgress(layer.fade, now);
       blendLayer(layer, progress);
       layer.canvas.getContext('2d').putImageData(layer.image, 0, 0);
       if (progress < 1) fading = true;
     }
+    if (cloudRenderer?.paint(now)) fading = true;
     const backgroundChanged = sky.changed || stars.fading;
     sky.changed = false;
     if (stars.fading) {
@@ -111,29 +133,63 @@ export default function SkyCanvas(props) {
     [],
   );
 
-  // Draws a new frame of the cloud layers, fading it in over `duration` ms.
-  // Returns the average color of the scene.
+  // The time to show the clouds at, from their own clock. While they're
+  // moving, it runs at `cloudSpeed` times real time, so changing the speed
+  // changes how fast they move on from where they are, without a jump.
+  const cloudTime = useCallback(() => {
+    const current = state.current;
+    const now = Date.now() / 1000;
+    if (latest.current.animating) {
+      current.cloudClock += (now - current.cloudClockUpdated) * (latest.current.cloudSpeed ?? 1);
+    }
+    current.cloudClockUpdated = now;
+    return current.cloudClock;
+  }, []);
+
+  /**
+   * Draws a new frame of the cloud layers, fading it in over `duration` ms.
+   * With `sceneChanged`, the settings have changed since the last frame.
+   */
   const drawClouds = useCallback(
-    (duration) => {
-      const settings = sceneSettings(latest.current);
+    (duration, sceneChanged) => {
+      const settings = sceneSettings(latest.current, cloudTime());
       const { width, height } = latest.current.windowSize;
       const cloudWidth = Math.max(1, Math.round(width * CLOUD_RENDER_SCALE));
       const cloudHeight = Math.max(1, Math.round(height * CLOUD_RENDER_SCALE));
-      const next = new Uint8ClampedArray(cloudWidth * cloudHeight * 4);
-      const average = renderClouds(next, cloudWidth, cloudHeight, settings);
-      const { clouds } = state.current;
-      clouds.canvas = cloudsRef.current;
-      setLayerFrame(clouds, next, cloudWidth, cloudHeight, duration);
+      const current = state.current;
+
+      if (current.cloudRenderer === undefined) {
+        current.cloudRenderer = createCloudRenderer(cloudsRef.current);
+      }
+      const renderer = current.cloudRenderer;
+      if (renderer) {
+        if (sceneChanged) {
+          const resized =
+            cloudsRef.current.width !== cloudWidth || cloudsRef.current.height !== cloudHeight;
+          renderer.setScene(settings, cloudWidth, cloudHeight);
+          // Times the GPU at each new size, to decide whether the clouds can move
+          if (resized || current.cloudFrameMs === null) {
+            current.cloudFrameMs = renderer.measureFrame(settings);
+            setAnimating(current.cloudFrameMs <= CLOUD_ANIMATION_BUDGET);
+          }
+        }
+        renderer.drawFrame(settings, settings.time, duration);
+      } else {
+        const next = new Uint8ClampedArray(cloudWidth * cloudHeight * 4);
+        renderClouds(next, cloudWidth, cloudHeight, settings);
+        current.clouds.canvas = cloudsRef.current;
+        setLayerFrame(current.clouds, next, cloudWidth, cloudHeight, duration);
+      }
       startPainting();
-      return average;
     },
-    [startPainting],
+    [cloudTime, startPainting],
   );
 
   // Draws every layer for the current settings, fading them in over `duration` ms
   const drawAll = useCallback(
     (duration) => {
-      const settings = sceneSettings(latest.current);
+      const started = performance.now();
+      const settings = sceneSettings(latest.current, cloudTime());
       const { width, height, pixelRatio } = latest.current.windowSize;
       const fullWidth = Math.round(width * pixelRatio);
       const fullHeight = Math.round(height * pixelRatio);
@@ -142,6 +198,7 @@ export default function SkyCanvas(props) {
       if (background.width !== fullWidth || background.height !== fullHeight) {
         resize(background, fullWidth, fullHeight);
         sky.changed = true;
+        stars.colors = null;
       }
 
       const skyColumn = new Uint8ClampedArray(fullHeight * 4);
@@ -152,40 +209,85 @@ export default function SkyCanvas(props) {
       renderHazeColumn(hazeColumn, fullHeight, settings);
       haze.canvas = hazeRef.current;
       setLayerFrame(haze, hazeColumn, 1, fullHeight, duration);
+      const skyDone = performance.now();
 
-      // The new stars, over the glow where they're densest, fading in from
-      // the stars showing now
-      copyInto(stars.from, stars.shown, fullWidth, fullHeight);
-      resize(stars.shown, fullWidth, fullHeight);
-      resize(stars.to, fullWidth, fullHeight);
-      const starsContext = stars.to.getContext('2d');
-      starsContext.clearRect(0, 0, fullWidth, fullHeight);
+      // The stars and the glow where they're densest, redrawn only if they've
+      // changed, fading in from the stars showing now
+      const colors = starColors(settings);
       const glow = document.createElement('canvas');
       glow.width = STAR_GLOW_WIDTH;
       glow.height = Math.max(1, Math.round((STAR_GLOW_WIDTH * height) / width));
       const glowContext = glow.getContext('2d');
       const glowImage = glowContext.createImageData(glow.width, glow.height);
       renderStarGlow(glowImage.data, glow.width, glow.height, settings);
-      glowContext.putImageData(glowImage, 0, 0);
-      starsContext.drawImage(glow, 0, 0, fullWidth, fullHeight);
-      renderStars(starsContext, fullWidth, fullHeight, settings, Math.max(1, Math.round(pixelRatio)));
-      stars.fade = { start: performance.now(), duration };
-      stars.fading = true;
+      const starsChanged = !sameValues(colors, stars.colors) || !sameValues(glowImage.data, stars.glow);
+      if (starsChanged) {
+        copyInto(stars.from, stars.shown, fullWidth, fullHeight);
+        resize(stars.shown, fullWidth, fullHeight);
+        resize(stars.to, fullWidth, fullHeight);
+        const starsContext = stars.to.getContext('2d');
+        starsContext.clearRect(0, 0, fullWidth, fullHeight);
+        glowContext.putImageData(glowImage, 0, 0);
+        starsContext.drawImage(glow, 0, 0, fullWidth, fullHeight);
+        drawStars(starsContext, fullWidth, fullHeight, colors, Math.max(1, Math.round(pixelRatio)));
+        stars.fade = { start: performance.now(), duration };
+        stars.fading = true;
+        stars.colors = colors;
+        stars.glow = glowImage.data;
+      }
+      const starsDone = performance.now();
 
-      const average = drawClouds(duration);
+      drawClouds(duration, true);
+      const cloudsDone = performance.now();
+
+      // The scene's average color, from a small drawing of it, for the text color
+      const averageHeight = Math.max(1, Math.round((AVERAGE_WIDTH * height) / width));
+      const average = renderClouds(
+        new Uint8ClampedArray(AVERAGE_WIDTH * averageHeight * 4),
+        AVERAGE_WIDTH,
+        averageHeight,
+        settings,
+      );
       latest.current.onTextColor(readableTextColor(average));
+      const done = performance.now();
+
+      latest.current.onStatus?.({
+        cloudRenderer: state.current.cloudRenderer ? 'WebGL' : 'CPU (WebGL not available)',
+        cloudFrameMs: state.current.cloudFrameMs,
+        animating: latest.current.animating,
+        fullUpdate: {
+          totalMs: done - started,
+          skyMs: skyDone - started,
+          starsMs: starsDone - skyDone,
+          starsRedrawn: starsChanged,
+          cloudsMs: cloudsDone - starsDone,
+          averageMs: done - cloudsDone,
+        },
+      });
     },
-    [drawClouds],
+    [cloudTime, drawClouds],
   );
 
-  const { colors, sunElevation, exposure, clouds, cloudBrightness, hazeContrast } = props;
+  const {
+    colors,
+    sunlight,
+    sunElevation,
+    exposure,
+    clouds,
+    cloudBrightness,
+    cloudLighting,
+    cloudGlow,
+    hazeContrast,
+    fadeDuration,
+  } = props;
   const { total, low, mid, high } = clouds;
   useEffect(() => {
-    drawAll(SETTINGS_FADE);
+    drawAll(fadeDuration);
   }, [
     drawAll,
     windowSize,
     colors,
+    sunlight,
     sunElevation,
     exposure,
     total,
@@ -193,16 +295,18 @@ export default function SkyCanvas(props) {
     mid,
     high,
     cloudBrightness,
+    cloudLighting,
+    cloudGlow,
     hazeContrast,
   ]);
 
-  // Cloud motion, only while there are cloud layers to move
+  // Cloud motion, only while there are cloud layers to move and the GPU is fast enough
   const hasCloudLayers = low > 0 || mid > 0 || high > 0;
   useEffect(() => {
-    if (!hasCloudLayers) return undefined;
-    const timer = setInterval(() => drawClouds(CLOUD_INTERVAL), CLOUD_INTERVAL);
+    if (!hasCloudLayers || !animating) return undefined;
+    const timer = setInterval(() => drawClouds(CLOUD_INTERVAL, false), CLOUD_INTERVAL);
     return () => clearInterval(timer);
-  }, [drawClouds, hasCloudLayers]);
+  }, [drawClouds, hasCloudLayers, animating]);
 
   return (
     <>
@@ -213,17 +317,31 @@ export default function SkyCanvas(props) {
   );
 }
 
-// The settings for drawing the scene now, from the component's props
-function sceneSettings({ colors, sunElevation, exposure, clouds, cloudBrightness, hazeContrast }) {
+// The settings for drawing the scene from the component's props, with the
+// clouds at clock time `time` (seconds)
+function sceneSettings(
+  { colors, sunlight, sunElevation, exposure, clouds, cloudBrightness, cloudLighting, cloudGlow, hazeContrast },
+  time,
+) {
   return {
     colors,
+    sunlight,
     sunElevation,
     exposure,
     clouds,
     cloudBrightness,
+    cloudLighting,
+    cloudGlow,
     hazeContrast,
-    time: Date.now() / 1000,
+    time,
   };
+}
+
+// Whether two arrays of numbers hold the same values
+function sameValues(a, b) {
+  if (!a || !b || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
 }
 
 /*

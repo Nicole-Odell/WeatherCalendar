@@ -64,11 +64,18 @@ export const HillaireSkyModel = {
   name: 'Hillaire 2020',
 
   /**
-   * Returns the CIE XYZ color of the sky in each view direction, with Y being
-   * luminance in cd/m². See SkyColorManager for `conditions` and `views`.
+   * Builds the atmosphere's lookup tables for the weather in `conditions`.
+   * This is the slow part (about a second), so it runs on a worker thread.
+   * The result is plain data that can be sent between threads.
    */
-  calculateSkyXYZ(conditions, views) {
-    const atmosphere = getAtmosphere(conditions);
+  createAtmosphere,
+
+  /**
+   * Returns the CIE XYZ color of the sky in each view direction, with Y being
+   * luminance in cd/m². `atmosphere` is from createAtmosphere. See
+   * SkyColorManager for `conditions` and `views`.
+   */
+  calculateSkyXYZ(atmosphere, conditions, views) {
     const sunElevation = toRadians(conditions.sunElevation);
     const muSun = Math.sin(sunElevation);
     // The sun is brighter when Earth is closer to it
@@ -95,29 +102,31 @@ export const HillaireSkyModel = {
       return spectrumToXYZ(radiance);
     });
   },
+
+  /**
+   * Returns the CIE XYZ color of direct sunlight reaching each height (km),
+   * after passing through the atmosphere, with Y being its illuminance in lux
+   * on a surface facing the sun. It's zero where Earth blocks the sun.
+   */
+  calculateSunlightXYZ(atmosphere, conditions, heights) {
+    const muSun = Math.sin(toRadians(conditions.sunElevation));
+    const irradianceScale = 1 / conditions.sunDistance ** 2;
+    const transmittance = new Float64Array(WAVELENGTH_COUNT);
+    return heights.map((height) => {
+      const r = GROUND_RADIUS + height * 1000;
+      if (rayIntersectsGround(r, muSun)) return { X: 0, Y: 0, Z: 0 };
+      lookUpTransmittance(atmosphere, r, muSun, transmittance);
+      const irradiance = new Float64Array(WAVELENGTH_COUNT);
+      for (let k = 0; k < WAVELENGTH_COUNT; k++) {
+        irradiance[k] = SOLAR_IRRADIANCE[k] * irradianceScale * transmittance[k];
+      }
+      // Converting irradiance the same way as radiance gives illuminance in lux
+      return spectrumToXYZ(irradiance);
+    });
+  },
 };
 
-// The tables depend only on the atmosphere, not on the sun or view direction,
-// so they're reused until the conditions change
-let cachedAtmosphere = { key: null, atmosphere: null };
-
-function getAtmosphere(conditions) {
-  const { surfacePressure, temperature, aerosolOpticalDepth, angstromExponent, ozoneColumn, groundAlbedo } =
-    conditions;
-  const key = JSON.stringify([
-    surfacePressure,
-    temperature,
-    aerosolOpticalDepth,
-    angstromExponent,
-    ozoneColumn,
-    groundAlbedo,
-  ]);
-  if (cachedAtmosphere.key !== key) {
-    cachedAtmosphere = { key, atmosphere: createAtmosphere(conditions) };
-  }
-  return cachedAtmosphere.atmosphere;
-}
-
+// The tables depend only on the atmosphere, not on the sun or view direction
 function createAtmosphere({
   surfacePressure,
   temperature,

@@ -30,6 +30,59 @@ a {
   color: inherit;
 }
 
+/* Cloud cover: sliders stacked, labels and values lined up, buttons centered below */
+.cloud-cover {
+  text-align: center;
+}
+
+.cloud-cover-sliders {
+  display: grid;
+  grid-template-columns: max-content max-content 3.5em;
+  gap: 6px 12px;
+  align-items: center;
+}
+
+/* Each row's label, slider and value go into the grid's columns */
+.cloud-cover-row {
+  display: contents;
+}
+
+.cloud-cover-row > span:first-child {
+  text-align: right;
+}
+
+.cloud-cover-row > span:last-child {
+  text-align: left;
+}
+
+/* Advanced settings: left-aligned, one setting per row where they're stacked */
+.advanced {
+  margin: 16px 0;
+  text-align: left;
+}
+
+.advanced summary {
+  cursor: pointer;
+  font-weight: bold;
+}
+
+.advanced h3,
+.advanced h4 {
+  margin: 16px 0 6px;
+}
+
+.setting-row {
+  margin: 6px 0;
+}
+
+.indent {
+  margin-left: 2em;
+}
+
+.advanced details {
+  margin-top: 16px;
+}
+
 /* Sky, stars and clouds behind the page, over the whole screen */
 .sky-background {
   position: fixed;

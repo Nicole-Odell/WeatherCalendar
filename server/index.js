@@ -8,8 +8,39 @@ import * as WeatherManager from './WeatherManager.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const distDir = path.join(__dirname, '..', 'dist');
 const PORT = process.env.PORT || 3001;
+// How often the weather cache is checked. It only fetches new weather once
+// its data is 15 minutes old (or missing).
+const WEATHER_CHECK_INTERVAL = 60 * 1000;
 
 const app = express();
+
+// The weather values the sky's atmosphere tables depend on
+function atmosphereWeather(current) {
+  return {
+    surfacePressure: current.surface_pressure,
+    temperature: current.temperature_2m,
+    aerosolOpticalDepth: current.aerosol_optical_depth,
+  };
+}
+
+// Refreshes the weather if it's due, and rebuilds the sky's atmosphere tables
+// in the background if it has changed significantly
+async function checkWeather(forceRefresh = false) {
+  const weather = await WeatherManager.GetCurrentWeatherData(forceRefresh);
+  SkyColorManager.UpdateAtmosphere(atmosphereWeather(weather.current)).catch((error) =>
+    console.error('Failed to build the atmosphere tables:', error),
+  );
+  return weather;
+}
+
+// The first check, which starts the first atmosphere tables building
+const firstWeatherCheck = checkWeather().catch((error) =>
+  console.error('Failed to get the weather:', error),
+);
+setInterval(
+  () => checkWeather().catch((error) => console.error('Failed to get the weather:', error)),
+  WEATHER_CHECK_INTERVAL,
+);
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok' });
@@ -18,7 +49,7 @@ app.get('/api/health', (req, res) => {
 app.get('/api/weather/current', async (req, res) => {
   try {
     const forceRefresh = req.query.forceRefresh === 'true';
-    res.json(await WeatherManager.GetCurrentWeatherData(forceRefresh));
+    res.json(await checkWeather(forceRefresh));
   } catch (error) {
     console.error('Failed to get current weather:', error);
     res.status(502).json({ error: error.message });
@@ -34,8 +65,10 @@ app.get('/api/time-of-day/sun-times', async (req, res) => {
   }
 });
 
-// Clear-sky colors looking toward the sun, using the current weather. The sun's
-// position is for `time` (an ISO 8601 date and time) if it's given, or for now.
+// Clear-sky colors looking toward the sun, and the color of direct sunlight by
+// height. The sun's position is for `time` (an ISO 8601 date and time) if it's
+// given, or for now. The atmosphere is from the weather the atmosphere tables
+// in use were built from, which `atmosphere` gives, until new ones are built.
 app.get('/api/sky/colors', async (req, res) => {
   const time = req.query.time ? new Date(req.query.time) : new Date();
   if (Number.isNaN(time.getTime())) {
@@ -43,16 +76,20 @@ app.get('/api/sky/colors', async (req, res) => {
     return;
   }
   try {
+    // Only waits the first time, before any tables are built
+    await firstWeatherCheck;
+    await SkyColorManager.WhenAtmosphereReady();
     const sun = TimeOfDayManager.GetSunPosition(time);
-    const { current } = await WeatherManager.GetCurrentWeatherData();
-    const colors = SkyColorManager.CalculateSkyColors({
-      sunElevation: sun.elevation,
-      sunDistance: sun.distance,
-      surfacePressure: current.surface_pressure,
-      temperature: current.temperature_2m,
-      aerosolOpticalDepth: current.aerosol_optical_depth,
+    const conditions = { sunElevation: sun.elevation, sunDistance: sun.distance };
+    const colors = SkyColorManager.CalculateSkyColors(conditions);
+    const sunlight = SkyColorManager.CalculateSunlight(conditions);
+    res.json({
+      time: time.toISOString(),
+      sun,
+      colors,
+      sunlight,
+      atmosphere: SkyColorManager.GetAtmosphereStatus(),
     });
-    res.json({ time: time.toISOString(), sun, colors });
   } catch (error) {
     console.error('Failed to calculate sky colors:', error);
     res.status(500).json({ error: error.message });
