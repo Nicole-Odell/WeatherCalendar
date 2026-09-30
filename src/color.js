@@ -20,12 +20,6 @@ export function withScreenBrightness(rgb, brightness) {
   return rgb.map((linear) => decodeSrgb(brightness * encodeSrgb(linear)));
 }
 
-// Converts linear-light sRGB [red, green, blue] to a CSS color
-export function linearRgbToCss(rgb) {
-  const [red, green, blue] = rgb.map((linear) => Math.round(255 * encodeSrgb(linear)));
-  return `rgb(${red} ${green} ${blue})`;
-}
-
 /**
  * Returns black or white, whichever is easier to read over a background color
  * given in linear-light sRGB. Below a luminance of about 0.18, white text has
@@ -36,12 +30,12 @@ export function readableTextColor([red, green, blue]) {
   return luminance > 0.179 ? 'black' : 'white';
 }
 
-// Applies the sRGB curve that screens expect
-function encodeSrgb(linear) {
+// Applies the sRGB curve that screens expect, to a linear-light value (0–1)
+export function encodeSrgb(linear) {
   return linear <= 0.0031308 ? 12.92 * linear : 1.055 * linear ** (1 / 2.4) - 0.055;
 }
 
-// Undoes the sRGB curve
-function decodeSrgb(encoded) {
+// Undoes the sRGB curve, giving a linear-light value (0–1)
+export function decodeSrgb(encoded) {
   return encoded <= 0.04045 ? encoded / 12.92 : ((encoded + 0.055) / 1.055) ** 2.4;
 }

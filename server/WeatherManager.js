@@ -6,8 +6,12 @@ const CACHE_DURATION_MS = 15 * 60 * 1000;
 // A forced refresh still uses the cache if it is newer than this
 const MIN_REFRESH_INTERVAL_MS = 60 * 1000;
 
-// Every variable Open-Meteo offers for current conditions
+// Every variable Open-Meteo offers for current conditions, plus cloud cover by
+// height (low is up to 3 km, mid 3–8 km, high above 8 km)
 const CURRENT_FIELDS = [
+  'cloud_cover_low',
+  'cloud_cover_mid',
+  'cloud_cover_high',
   'temperature_2m',
   'relative_humidity_2m',
   'apparent_temperature',

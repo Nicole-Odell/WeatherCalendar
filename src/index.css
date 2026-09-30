@@ -6,7 +6,9 @@ body,
 }
 
 body {
-  background: #808080;
+  /* Until the sky is drawn */
+  background: #030304; /* eigengrau at its lowest brightness */
+  color: white;
   font-family: system-ui, sans-serif;
 }
 
@@ -28,9 +30,11 @@ a {
   color: inherit;
 }
 
-/* Sky color gradient behind the page, covering the whole screen */
+/* Sky, stars and clouds behind the page, over the whole screen */
 .sky-background {
   position: fixed;
   inset: 0;
+  width: 100%;
+  height: 100%;
   z-index: -1;
 }
