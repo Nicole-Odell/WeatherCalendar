@@ -82,6 +82,7 @@ const MOON_FIELDS = {
   contrast: { label: 'Contrast' },
   glow: { label: 'Glow (share of the lit surface’s luminance where it starts)' },
   glowWidth: { label: 'Glow reach', unit: 'moon radii' },
+  terminatorSoftness: { label: 'Terminator softness', unit: 'moon radii' },
 };
 const NO_CLOUDS = { total: 0, low: 0, mid: 0, high: 0 };
 

@@ -149,9 +149,10 @@ export const DEFAULT_CLOUD_GLOW = {
  * before setting the luminance at each pixel. 1 is the picture's own range.
  * `glow` is the luminance of the glow around the moon's lit part where it
  * starts, as a share of the lit surface's average, and `glowWidth` is how far
- * it reaches, in moon radii (see moonGlow).
+ * it reaches, in moon radii (see moonGlow). `terminatorSoftness` is how wide
+ * the blurred line between the lit and dark parts is, in moon radii.
  */
-export const DEFAULT_MOON = { luminance: 10000, contrast: 3, glow: 0.5, glowWidth: 0.1 };
+export const DEFAULT_MOON = { luminance: 10000, contrast: 3, glow: 0.5, glowWidth: 0.1, terminatorSoftness: 0.15 };
 // The glow falls off as a power of (1 + distance / scale), with the scale
 // this share of its reach: steep near the moon, then gentle
 // The moon's colors are worked out for bands of this many rows, which the
@@ -164,8 +165,9 @@ const MOON_ROW_STEP = 4;
 const MOON_LIGHT_STEPS_PER_E = 40;
 const MOON_LIGHT_MIN = 1e-7;
 const MOON_LIGHT_MAX = 1e7;
-// How soft the line between the moon's lit and dark parts is, in pixels
-const TERMINATOR_SOFTNESS = 1.5;
+// The line between the moon's lit and dark parts is never sharper than this
+// many pixels, which smooths its edge
+const MIN_TERMINATOR_SOFTNESS = 1.5;
 // Stars behind the glow are hidden in proportion to how much it brightens
 // the sky, fully once it does so by this many on-screen steps (of 255)
 const GLOW_OPAQUE_STEPS = 16;
@@ -704,7 +706,10 @@ function moonSurfaceBrightness(phase) {
  */
 export function renderMoon(pixels, size, picture, diameter, top, screenHeight, settings) {
   const { toScreen, skyAt } = prepareScene(settings);
-  const { luminance, contrast, glow, glowWidth, phase: givenPhase } = { ...DEFAULT_MOON, ...settings.moon };
+  const { luminance, contrast, glow, glowWidth, terminatorSoftness, phase: givenPhase } = {
+    ...DEFAULT_MOON,
+    ...settings.moon,
+  };
   const phase = givenPhase ?? 0.5;
   const radius = diameter / 2;
   const center = size / 2;
@@ -720,6 +725,11 @@ export function renderMoon(pixels, size, picture, diameter, top, screenHeight, s
   // beyond `terminator` times the disc's half-width at that height
   const litSide = phase < 0.5 ? 1 : -1;
   const terminator = Math.cos(2 * Math.PI * phase);
+  // Across the blurred line between lit and dark, the light falls by equal
+  // factors (which look even on screen, through the sky's exposure), from the
+  // lit surface to below the exposure floor
+  const blur = Math.max(MIN_TERMINATOR_SOFTNESS, terminatorSoftness * radius);
+  const blurDecades = Math.log10(Math.max(10, (surface * Math.max(...weights)) / settings.exposure.floor));
   // The glow, starting at a share of the lit surface's average luminance
   const glowAt = moonGlow(glow * luminance * moonSurfaceBrightness(phase), glowWidth * radius, settings.exposure.floor);
 
@@ -780,8 +790,10 @@ export function renderMoon(pixels, size, picture, diameter, top, screenHeight, s
         const up = dy / radius;
         const halfWidth = Math.sqrt(Math.max(0, 1 - up * up));
         const beyondTerminator = ((litSide * dx) / radius - halfWidth * terminator) * radius;
-        const lit = clamp(beyondTerminator / TERMINATOR_SOFTNESS + 0.5, 0, 1);
-        light = discCover * (surface * weights[levels[p]] * lit + (1 - lit) * glowAt(Math.max(0, -beyondTerminator)));
+        const lit = 10 ** (-blurDecades * smoothstep(blur / 2, -blur / 2, beyondTerminator));
+        // (from where the blur starts, so the light only falls toward the dark part)
+        const intoDark = Math.max(0, blur / 2 - beyondTerminator);
+        light = discCover * (surface * weights[levels[p]] * lit + (1 - lit) * glowAt(intoDark));
       }
       // The glow outside the disc, by distance from the moon's lit part.
       // Beside the dark side of its edge, that's the distance to the edge
