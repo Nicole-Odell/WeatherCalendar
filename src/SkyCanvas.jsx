@@ -32,7 +32,9 @@ const CLOUD_ANIMATION_BUDGET = 50;
  * Each redraw fades in over `fadeDuration` ms from what's showing. Only pixels
  * that differ between the two frames change, and each moves straight from its
  * old value to its new one, so layers that aren't changing stay exactly as
- * they are. The stars are only redrawn when their colors change.
+ * they are. The stars are only redrawn when their colors change, and without a
+ * fade: they change by a step or so at a time, too little to see, and skipping
+ * it saves keeping extra full-screen copies (which a Raspberry Pi can't spare).
  *
  * Cloud motion (a new frame every CLOUD_INTERVAL ms) only runs with WebGL, and
  * only if the GPU is fast enough; otherwise the clouds stay still. Reports the
@@ -50,16 +52,12 @@ export default function SkyCanvas(props) {
       sky: createLayer(offScreen()),
       clouds: createLayer(null),
       haze: createLayer(null),
-      // Star frames: what was showing, the new frame, and the blend being shown,
-      // plus the star colors and glow shown (to tell when they change)
+      // The stars shown, and their colors and glow (to tell when they change)
       stars: {
-        from: offScreen(),
-        to: offScreen(),
-        shown: offScreen(),
-        fade: { start: 0, duration: 1 },
-        fading: false,
+        canvas: offScreen(),
         colors: null,
         glow: null,
+        changed: false,
       },
       // WebGL cloud drawing, once set up (null if it can't be)
       cloudRenderer: undefined,
@@ -98,14 +96,9 @@ export default function SkyCanvas(props) {
       if (progress < 1) fading = true;
     }
     if (cloudRenderer?.paint(now)) fading = true;
-    const backgroundChanged = sky.changed || stars.fading;
+    const backgroundChanged = sky.changed || stars.changed;
     sky.changed = false;
-    if (stars.fading) {
-      const progress = fadeProgress(stars.fade, now);
-      blendFrames(stars.shown, stars.from, stars.to, progress);
-      stars.fading = progress < 1;
-      if (stars.fading) fading = true;
-    }
+    stars.changed = false;
 
     // The sky stretched across the screen, with the stars' light added over it
     if (backgroundChanged) {
@@ -114,7 +107,7 @@ export default function SkyCanvas(props) {
       context.globalCompositeOperation = 'copy';
       context.drawImage(sky.canvas, 0, 0, canvas.width, canvas.height);
       context.globalCompositeOperation = 'screen';
-      context.drawImage(stars.shown, 0, 0, canvas.width, canvas.height);
+      context.drawImage(stars.canvas, 0, 0, canvas.width, canvas.height);
     }
 
     state.current.animationFrame = fading ? requestAnimationFrame(paint) : 0;
@@ -211,8 +204,7 @@ export default function SkyCanvas(props) {
       setLayerFrame(haze, hazeColumn, 1, fullHeight, duration);
       const skyDone = performance.now();
 
-      // The stars and the glow where they're densest, redrawn only if they've
-      // changed, fading in from the stars showing now
+      // The stars and the glow where they're densest, redrawn only if they've changed
       const colors = starColors(settings);
       const glow = document.createElement('canvas');
       glow.width = STAR_GLOW_WIDTH;
@@ -222,18 +214,15 @@ export default function SkyCanvas(props) {
       renderStarGlow(glowImage.data, glow.width, glow.height, settings);
       const starsChanged = !sameValues(colors, stars.colors) || !sameValues(glowImage.data, stars.glow);
       if (starsChanged) {
-        copyInto(stars.from, stars.shown, fullWidth, fullHeight);
-        resize(stars.shown, fullWidth, fullHeight);
-        resize(stars.to, fullWidth, fullHeight);
-        const starsContext = stars.to.getContext('2d');
+        resize(stars.canvas, fullWidth, fullHeight);
+        const starsContext = stars.canvas.getContext('2d');
         starsContext.clearRect(0, 0, fullWidth, fullHeight);
         glowContext.putImageData(glowImage, 0, 0);
         starsContext.drawImage(glow, 0, 0, fullWidth, fullHeight);
         drawStars(starsContext, fullWidth, fullHeight, colors, Math.max(1, Math.round(pixelRatio)));
-        stars.fade = { start: performance.now(), duration };
-        stars.fading = true;
         stars.colors = colors;
         stars.glow = glowImage.data;
+        stars.changed = true;
       }
       const starsDone = performance.now();
 
@@ -434,36 +423,12 @@ function fadeProgress(fade, now) {
   return Math.min(1, (now - fade.start) / fade.duration);
 }
 
-/**
- * Shows `to` faded in over `from` by `progress` (0–1) in `target`. Both frames
- * are opaque (the stars are black where there's nothing), so drawing the new
- * one over the old blends each pixel between them in one step, which keeps
- * rounding from making faint light flicker.
- */
-function blendFrames(target, from, to, progress) {
-  const context = target.getContext('2d');
-  context.globalCompositeOperation = 'copy';
-  context.globalAlpha = 1;
-  context.drawImage(from, 0, 0);
-  context.globalCompositeOperation = 'source-over';
-  context.globalAlpha = progress;
-  context.drawImage(to, 0, 0);
-}
-
 // Sets a canvas's size, which also clears it, only if it's changing
 function resize(canvas, width, height) {
   if (canvas.width !== width || canvas.height !== height) {
     canvas.width = width;
     canvas.height = height;
   }
-}
-
-// Replaces `target` with a copy of `source`, scaled to width × height
-function copyInto(target, source, width, height) {
-  resize(target, width, height);
-  const context = target.getContext('2d');
-  context.globalCompositeOperation = 'copy';
-  context.drawImage(source, 0, 0, width, height);
 }
 
 function currentWindowSize() {
