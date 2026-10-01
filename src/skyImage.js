@@ -182,8 +182,8 @@ const EDGE_GLOW_ZONES_PER_UNIT = 4;
 /**
  * Draws the sky into `pixels`: an RGBA column 1 pixel wide and `height` tall
  */
-export function renderSkyColumn(pixels, height, settings) {
-  const { sky } = rowColors(settings, height);
+export function renderSkyColumn(pixels, height, settings, rows = rowColors(settings, height)) {
+  const { sky } = rows;
   for (let row = 0; row < height; row++) {
     for (let channel = 0; channel < 3; channel++) {
       pixels[row * 4 + channel] = toScreenValue(sky[row][channel], channel);
@@ -196,8 +196,8 @@ export function renderSkyColumn(pixels, height, settings) {
  * Draws the haze into `pixels`: an RGBA column 1 pixel wide and `height` tall,
  * to go over the sky and clouds
  */
-export function renderHazeColumn(pixels, height, settings) {
-  const { scene, sky, haze } = rowColors(settings, height);
+export function renderHazeColumn(pixels, height, settings, rows = rowColors(settings, height)) {
+  const { scene, sky, haze } = rows;
   const alpha = Math.round(255 * scene.hazeOpacity);
   for (let row = 0; row < height; row++) {
     for (let channel = 0; channel < 3; channel++) {
@@ -212,8 +212,8 @@ export function renderHazeColumn(pixels, height, settings) {
  * sky and under the haze. Returns the average color of the whole scene (sky,
  * clouds and haze, without stars), in linear-light sRGB.
  */
-export function renderClouds(pixels, width, height, settings) {
-  const { scene, sky, cloud, cloudAt, haze, rowHeight, layerAt } = rowColors(settings, height);
+export function renderClouds(pixels, width, height, settings, rows = rowColors(settings, height)) {
+  const { scene, sky, cloud, cloudAt, haze, rowHeight, layerAt } = rows;
   const { cloudMaxOpacity, hazeOpacity } = scene;
   const lighting = settings.cloudLighting ?? DEFAULT_CLOUD_LIGHTING;
   const scattering = lighting.mode === 'scattering';
@@ -294,6 +294,34 @@ export function renderClouds(pixels, width, height, settings) {
   return total.map((value) => value / (width * height));
 }
 
+/**
+ * Each row's colors for a screen `height` rows tall, to pass to the drawing
+ * functions above and below so they all share one calculation
+ */
+export function computeRows(settings, height) {
+  return rowColors(settings, height);
+}
+
+/**
+ * The scene's approximate average color (linear light), from `rows` (see
+ * computeRows): the sky, covered in each cloud band by that layer's share of
+ * cloud cover, then the haze over it. It's close enough to choose a readable
+ * text color without drawing the clouds.
+ */
+export function sceneAverageColor({ scene, sky, cloud, haze, rowHeight, layerAt }) {
+  const total = [0, 0, 0];
+  sky.forEach((rgb, row) => {
+    const layer = layerAt(rowHeight(row));
+    const coverage = layer ? layer.cover * scene.cloudMaxOpacity : 0;
+    for (let channel = 0; channel < 3; channel++) {
+      let value = rgb[channel] + (cloud[row][channel] - rgb[channel]) * coverage;
+      value += (haze[row] - value) * scene.hazeOpacity;
+      total[channel] += value;
+    }
+  });
+  return total.map((value) => value / sky.length);
+}
+
 /*
  * Drawing the cloud layers on the GPU (see cloudsGL.js). The shader does the
  * per-pixel work of renderClouds (noise, cloud shape, glow and boost, and the
@@ -328,8 +356,8 @@ export const CLOUD_SHADER_CONSTANTS = {
  * - uniforms: values that are the same for every pixel
  * - layers: for each cloud layer showing, its band and noise settings
  */
-export function cloudShaderData(settings, height) {
-  const { scene, sky, cloud, cloudAt, rowHeight, layerAt } = rowColors(settings, height);
+export function cloudShaderData(settings, height, colorRows = rowColors(settings, height)) {
+  const { scene, sky, cloud, cloudAt, rowHeight, layerAt } = colorRows;
   const { ROW_TEXELS, GLOW_ENCODE_RANGE, SCATTERING_LUT_SIZE } = CLOUD_SHADER_CONSTANTS;
   const lighting = settings.cloudLighting ?? DEFAULT_CLOUD_LIGHTING;
   const scattering = lighting.mode === 'scattering';
@@ -857,6 +885,23 @@ export function renderStarGlow(pixels, width, height, settings) {
       pixels[index * 4 + 3] = 255;
     }
   }
+}
+
+/**
+ * A key for the stars' colors and glow: scenes with the same key have the same
+ * stars, so they needn't be worked out again. It's 'day' when the whole sky is
+ * at least as bright as the brightest star, so none show. When the whole sky
+ * is darker than the exposure floor, every star shows and only the exposure
+ * matters, so the key is from that. In between (twilight) it's null, and they
+ * have to be worked out.
+ */
+export function starsKey({ colors, exposure }) {
+  const brightestStar = STAR_MAX_BRIGHTNESS * exposure.floor;
+  if (colors.every((color) => color.brightness >= brightestStar)) return 'day';
+  if (colors.every((color) => color.brightness < exposure.floor)) {
+    return `night ${exposure.floor} ${exposure.ceiling}`;
+  }
+  return null;
 }
 
 /**

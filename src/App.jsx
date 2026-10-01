@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import SkyCanvas from './SkyCanvas.jsx';
+import { createStore, useStore } from './store.js';
 import {
   DEFAULT_CLOUD_BRIGHTNESS,
   DEFAULT_CLOUD_GLOW,
@@ -123,28 +124,166 @@ const MAX_CLOUD_SPEED = 20;
 
 const milliseconds = (value) => `${value.toFixed(1)} ms`;
 
-// How long the last full redraw of the sky took, from SkyCanvas
-function FullUpdateStatus({ status: { fullUpdate } }) {
+// The latest sky colors from the server, and how the sky is being drawn (from
+// SkyCanvas). Both change every second, so they're kept out of App's state:
+// only the components that read them re-render, keeping the page quick to
+// respond to taps.
+const skyStore = createStore(null);
+const statusStore = createStore(null);
+
+// The sky behind the page, drawn from the latest sky colors
+const LiveSkyCanvas = memo(function LiveSkyCanvas(props) {
+  const sky = useStore(skyStore);
+  if (!sky) return null;
   return (
-    <p>
-      Last full update: {milliseconds(fullUpdate.totalMs)} (sky and haze{' '}
-      {milliseconds(fullUpdate.skyMs)}, stars {milliseconds(fullUpdate.starsMs)}
-      {fullUpdate.starsRedrawn ? ', redrawn' : ', unchanged'}, clouds{' '}
-      {milliseconds(fullUpdate.cloudsMs)}, text color {milliseconds(fullUpdate.averageMs)})
-    </p>
+    <SkyCanvas
+      colors={sky.colors}
+      sunlight={sky.sunlight}
+      sunElevation={sky.sun.elevation}
+      fadeDuration={SKY_FADE}
+      onStatus={statusStore.set}
+      {...props}
+    />
+  );
+});
+
+// Where the sun is, and the atmosphere the sky colors were calculated with
+function SkyInfo() {
+  const sky = useStore(skyStore);
+  if (!sky) return null;
+  return (
+    <>
+      <p>
+        Clear sky toward the sun at {formatTime(sky.time)} (sun elevation{' '}
+        {sky.sun.elevation.toFixed(1)}°, azimuth {sky.sun.azimuth.toFixed(1)}°)
+      </p>
+      {sky.atmosphere?.conditions && (
+        <p>
+          Atmosphere tables from {sky.atmosphere.conditions.surfacePressure} hPa,{' '}
+          {sky.atmosphere.conditions.temperature} °C, haze{' '}
+          {sky.atmosphere.conditions.aerosolOpticalDepth}, built{' '}
+          {new Date(sky.atmosphere.builtAt).toLocaleTimeString()}
+          {sky.atmosphere.rebuilding && ' (rebuilding for new weather)'}
+        </p>
+      )}
+    </>
   );
 }
 
-// How the clouds are being drawn, from SkyCanvas
-function CloudStatus({ status: { cloudRenderer, cloudFrameMs, animating } }) {
+// How long the last full redraw of the sky took, and how the clouds are drawn
+function RenderStatus() {
+  const status = useStore(statusStore);
+  if (!status) return null;
+  const { fullUpdate, cloudRenderer, cloudFrameMs, animating, thread } = status;
   return (
-    <p>
-      Clouds: {cloudRenderer}
-      {cloudFrameMs !== null && `, ${milliseconds(cloudFrameMs)} per frame on the GPU`}, motion{' '}
-      {animating ? 'on' : 'off'}
-    </p>
+    <>
+      <p>
+        Last full update: {milliseconds(fullUpdate.totalMs)} on the {thread} (sky and haze{' '}
+        {milliseconds(fullUpdate.skyMs)}, stars {milliseconds(fullUpdate.starsMs)}
+        {fullUpdate.starsRedrawn ? ', redrawn' : ', unchanged'}, clouds{' '}
+        {milliseconds(fullUpdate.cloudsMs)}
+        {fullUpdate.cloudsRedrawn ? ', redrawn' : ', unchanged'}, text color{' '}
+        {milliseconds(fullUpdate.averageMs)})
+      </p>
+      <p>
+        Clouds: {cloudRenderer}
+        {cloudFrameMs !== null && `, ${milliseconds(cloudFrameMs)} per frame on the GPU`}, motion{' '}
+        {animating ? 'on' : 'off'}
+      </p>
+    </>
   );
 }
+
+// Shown by the cloud speed slider when the device is too slow for motion
+function CloudMotionNote() {
+  const animating = useStore(statusStore)?.animating;
+  return animating === false ? ' (cloud motion is off on this device)' : null;
+}
+
+// The sky colors by elevation, built only while open
+function SkyColorDetails() {
+  const [open, setOpen] = useState(false);
+  return (
+    <details onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <summary>Sky Color Details</summary>
+      {open && <SkyColorTable />}
+    </details>
+  );
+}
+
+function SkyColorTable() {
+  const sky = useStore(skyStore);
+  if (!sky) return null;
+  return (
+    <table>
+      <thead>
+        <tr>
+          <th>elevation</th>
+          <th>hue</th>
+          <th>saturation</th>
+          <th>luminance (cd/m²)</th>
+        </tr>
+      </thead>
+      <tbody>
+        {/* Highest first, as it would appear looking at the sky */}
+        {[...sky.colors].reverse().map((color) => (
+          <tr key={color.elevation}>
+            <td>{color.elevation}°</td>
+            <td>{Math.round(color.hue)}°</td>
+            <td>{color.saturation.toFixed(2)}</td>
+            <td>{luminanceFormat.format(color.brightness)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+const WeatherTable = memo(function WeatherTable({ weather }) {
+  return (
+    <>
+      <table>
+        <tbody>
+          {Object.entries(weather.current).map(([field, metricValue]) => {
+            const { value, unit } = toImperial(metricValue, weather.units[field]);
+            return (
+              <tr key={field}>
+                <th>{field}</th>
+                <td>
+                  {value} {unit}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      <p>Last updated: {new Date(weather.fetchedAt).toLocaleString()}</p>
+    </>
+  );
+});
+
+const SunTimesTable = memo(function SunTimesTable({ sunTimes }) {
+  return (
+    <>
+      <table>
+        <tbody>
+          {Object.entries(sunTimes.times).map(([field, time]) => (
+            <tr key={field}>
+              <th>{SUN_TIME_LABELS[field] ?? field}</th>
+              <td>{time ? formatTime(time) : 'none'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p>
+        Sun times for {sunTimes.date} from{' '}
+        <a href="https://sunrise-sunset.org" target="_blank" rel="noreferrer">
+          sunrise-sunset.org
+        </a>
+      </p>
+    </>
+  );
+});
 
 // A number input on its own row, with its label
 function NumberRow({ label, value, onChange, min = 0, max, unit }) {
@@ -172,7 +311,6 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [sunTimes, setSunTimes] = useState(null);
   const [sunError, setSunError] = useState(null);
-  const [sky, setSky] = useState(null);
   const [skyError, setSkyError] = useState(null);
   // Time the sky colors are calculated for, as "HH:MM", or '' for now
   const [skyTime, setSkyTime] = useState('');
@@ -181,8 +319,6 @@ export default function App() {
   const latestSkyRequest = useRef(0);
   // Whether a sky request is waiting for its answer, so updates don't pile up
   const skyRequestPending = useRef(false);
-  // How the sky is being drawn, from SkyCanvas
-  const [renderStatus, setRenderStatus] = useState(null);
   // How fast the clouds move, which takes effect straight away
   const [cloudSpeed, setCloudSpeed] = useState(DEFAULT_CLOUD_SPEED);
   // Whether test play is stepping the sky color time forward
@@ -233,7 +369,7 @@ export default function App() {
   });
   const [cloudLightingError, setCloudLightingError] = useState(null);
 
-  const weatherClouds = weather ? cloudsFromWeather(weather.current) : NO_CLOUDS;
+  const weatherClouds = useMemo(() => (weather ? cloudsFromWeather(weather.current) : NO_CLOUDS), [weather]);
   const clouds = cloudOverride ?? weatherClouds;
 
   // The sliders follow the weather until they're applied
@@ -271,7 +407,7 @@ export default function App() {
       const result = await fetchJson(`/api/sky/colors${query}`);
       // Ignore answers to earlier requests that arrive after a later one
       if (request === latestSkyRequest.current) {
-        setSky(result);
+        skyStore.set(result);
         setSkyError(null);
       }
     } catch (err) {
@@ -406,76 +542,31 @@ export default function App() {
 
   return (
     <>
-      {sky && (
-        <SkyCanvas
-          colors={sky.colors}
-          sunlight={sky.sunlight}
-          cloudLighting={cloudLighting}
-          cloudGlow={cloudGlow}
-          sunElevation={sky.sun.elevation}
-          exposure={exposure}
-          clouds={clouds}
-          cloudBrightness={cloudBrightness}
-          hazeContrast={hazeContrast}
-          fadeDuration={SKY_FADE}
-          cloudSpeed={cloudSpeed}
-          onTextColor={setTextColor}
-          onStatus={setRenderStatus}
-        />
-      )}
+      <LiveSkyCanvas
+        cloudLighting={cloudLighting}
+        cloudGlow={cloudGlow}
+        exposure={exposure}
+        clouds={clouds}
+        cloudBrightness={cloudBrightness}
+        hazeContrast={hazeContrast}
+        cloudSpeed={cloudSpeed}
+        onTextColor={setTextColor}
+      />
       <button
         type="button"
         className="content-toggle"
-        style={{ color: sky ? textColor : undefined }}
+        style={{ color: textColor }}
         onClick={() => setContentHidden(!contentHidden)}
       >
         {contentHidden ? 'Show' : 'Hide'}
       </button>
       <main
         className="app"
-        style={{ color: sky ? textColor : undefined, display: contentHidden ? 'none' : undefined }}
+        style={{ color: textColor, display: contentHidden ? 'none' : undefined }}
       >
-        {weather && (
-          <>
-            <table>
-              <tbody>
-                {Object.entries(weather.current).map(([field, metricValue]) => {
-                  const { value, unit } = toImperial(metricValue, weather.units[field]);
-                  return (
-                    <tr key={field}>
-                      <th>{field}</th>
-                      <td>
-                        {value} {unit}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-            <p>Last updated: {new Date(weather.fetchedAt).toLocaleString()}</p>
-          </>
-        )}
+        {weather && <WeatherTable weather={weather} />}
         {weatherError && <p>Weather error: {weatherError}</p>}
-        {sunTimes && (
-          <>
-            <table>
-              <tbody>
-                {Object.entries(sunTimes.times).map(([field, time]) => (
-                  <tr key={field}>
-                    <th>{SUN_TIME_LABELS[field] ?? field}</th>
-                    <td>{time ? formatTime(time) : 'none'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <p>
-              Sun times for {sunTimes.date} from{' '}
-              <a href="https://sunrise-sunset.org" target="_blank" rel="noreferrer">
-                sunrise-sunset.org
-              </a>
-            </p>
-          </>
-        )}
+        {sunTimes && <SunTimesTable sunTimes={sunTimes} />}
         {sunError && <p>Sun times error: {sunError}</p>}
         <p>
           <label>
@@ -572,29 +663,12 @@ export default function App() {
               />{' '}
               {cloudSpeed.toFixed(1)}×
             </label>
-            {renderStatus && !renderStatus.animating && ' (cloud motion is off on this device)'}
+            <CloudMotionNote />
           </p>
         </div>
-        {sky && (
-          <>
-            <p>
-              Clear sky toward the sun at {formatTime(sky.time)} (sun elevation{' '}
-              {sky.sun.elevation.toFixed(1)}°, azimuth {sky.sun.azimuth.toFixed(1)}°)
-            </p>
-            {sky.atmosphere?.conditions && (
-              <p>
-                Atmosphere tables from {sky.atmosphere.conditions.surfacePressure} hPa,{' '}
-                {sky.atmosphere.conditions.temperature} °C, haze{' '}
-                {sky.atmosphere.conditions.aerosolOpticalDepth}, built{' '}
-                {new Date(sky.atmosphere.builtAt).toLocaleTimeString()}
-                {sky.atmosphere.rebuilding && ' (rebuilding for new weather)'}
-              </p>
-            )}
-          </>
-        )}
+        <SkyInfo />
         {skyError && <p>Sky color error: {skyError}</p>}
-        {renderStatus && <FullUpdateStatus status={renderStatus} />}
-        {renderStatus && <CloudStatus status={renderStatus} />}
+        <RenderStatus />
 
         <details className="advanced">
           <summary>Advanced</summary>
@@ -775,32 +849,7 @@ export default function App() {
             {cloudGlowError && <p>Cloud glow error: {cloudGlowError}</p>}
           </div>
 
-          {sky && (
-            <details>
-              <summary>Sky Color Details</summary>
-              <table>
-                <thead>
-                  <tr>
-                    <th>elevation</th>
-                    <th>hue</th>
-                    <th>saturation</th>
-                    <th>luminance (cd/m²)</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {/* Highest first, as it would appear looking at the sky */}
-                  {[...sky.colors].reverse().map((color) => (
-                    <tr key={color.elevation}>
-                      <td>{color.elevation}°</td>
-                      <td>{Math.round(color.hue)}°</td>
-                      <td>{color.saturation.toFixed(2)}</td>
-                      <td>{luminanceFormat.format(color.brightness)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </details>
-          )}
+          <SkyColorDetails />
         </details>
 
         <p>

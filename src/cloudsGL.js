@@ -1,5 +1,5 @@
 import { permutationImage } from './noise.js';
-import { CLOUD_SHADER_CONSTANTS, cloudNoiseOrigins, cloudShaderData } from './skyImage.js';
+import { CLOUD_SHADER_CONSTANTS, cloudNoiseOrigins } from './skyImage.js';
 
 /*
  * Draws the cloud layers with WebGL 1, which even a Raspberry Pi's GPU can do
@@ -337,10 +337,11 @@ export function createCloudRenderer(canvas) {
 
   return {
     /**
-     * Sets the canvas size (pixels) and the scene (settings as for
-     * renderClouds). Call before drawing a frame whenever either changes.
+     * Sets the canvas size (pixels) and the scene, as `data` from
+     * cloudShaderData for that height. Call before drawing a frame whenever
+     * either changes.
      */
-    setScene(settings, newWidth, newHeight) {
+    setScene(data, newWidth, newHeight) {
       if (newWidth !== width || newHeight !== height) {
         width = newWidth;
         height = newHeight;
@@ -349,7 +350,7 @@ export function createCloudRenderer(canvas) {
         for (const frame of Object.values(frames)) resizeFrame(gl, frame, width, height);
         hasFrame = false;
       }
-      shaderData = cloudShaderData(settings, height);
+      shaderData = data;
       gl.bindTexture(gl.TEXTURE_2D, rows);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, ROW_TEXELS, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, shaderData.rows);
       gl.bindTexture(gl.TEXTURE_2D, scatteringLut);

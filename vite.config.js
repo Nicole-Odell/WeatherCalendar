@@ -8,6 +8,11 @@ export default defineConfig({
     // rewritten for it
     target: 'chrome74',
   },
+  worker: {
+    // Chromium 74 can't run module workers, so the sky worker is built as a
+    // classic script
+    format: 'iife',
+  },
   server: {
     // Forward API calls to the Express backend during development
     proxy: {
