@@ -26,7 +26,7 @@ const RENDER_SCALE = 0.25;
 // sky shown, would be too small to see much of.)
 const MOON_FROM_TOP = 0.35;
 const MOON_FROM_RIGHT = 0.1;
-const MOON_RADIUS = 0.1;
+const MOON_RADIUS = 0.05;
 // Width in pixels the star glow is drawn at before being smoothed up
 const STAR_GLOW_WIDTH = 240;
 // How often a new frame of cloud motion is drawn (ms), faded in over the same time

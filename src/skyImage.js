@@ -617,8 +617,9 @@ function colorBlend(light, color, amount) {
  * pixel shows the sky's luminance plus the moon's through the sky's exposure,
  * so the moon is faint against a bright day sky and bright at night. Its
  * luminance is settings.moon.luminance on average, varying with the picture's
- * brightness raised to settings.moon.contrast. It's neutral gray, as the moon
- * nearly is.
+ * brightness raised to settings.moon.contrast. Like the stars, its own light
+ * is white at full on-screen brightness and takes on eigengrau's hue and
+ * saturation as it dims toward black.
  */
 export function renderMoon(pixels, image, width, height, top, screenHeight, settings) {
   const { toScreen, skyAt } = prepareScene(settings);
@@ -647,10 +648,19 @@ export function renderMoon(pixels, image, width, height, top, screenHeight, sett
       const skyColor = fullBrightnessColor(sky.rgb);
       const skyWeight = luminanceOf(skyColor);
       for (let level = 0; level < 256; level++) {
-        const light = sky.luminance + (luminance * weights[level]) / average;
-        // The sky's color and the moon's neutral gray, mixed by the light each gives
+        const moonLuminance = (luminance * weights[level]) / average;
+        const light = sky.luminance + moonLuminance;
+        // The moon's color at full brightness: eigengrau's hue blending to
+        // white as the moon's own on-screen brightness rises
+        const moonBrightness = toScreen(moonLuminance);
+        const moonColor = EIGENGRAU_TINT.map((tint) => decodeSrgb(tint + (1 - tint) * moonBrightness));
+        const moonWeight = luminanceOf(moonColor);
+        // The sky's and moon's colors, mixed by the light each gives
         const skyShare = light > 0 ? sky.luminance / light : 1;
-        const mixed = skyColor.map((value) => (skyShare * value) / skyWeight + (1 - skyShare));
+        const mixed = skyColor.map(
+          (value, channel) =>
+            (skyShare * value) / skyWeight + ((1 - skyShare) * moonColor[channel]) / moonWeight,
+        );
         const peak = Math.max(...mixed);
         const rgb = withScreenBrightness(
           mixed.map((value) => value / peak),
