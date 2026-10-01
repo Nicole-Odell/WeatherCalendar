@@ -141,6 +141,18 @@ export const DEFAULT_CLOUD_GLOW = {
   boostContrast: 2,
   boostSaturation: 2,
 };
+/*
+ * The moon: `luminance` is its average luminance (cd/m²), by default about the
+ * full moon's. The sky's exposure squeezes the moon's bright and dark areas
+ * together, so `contrast` stretches them apart first: the moon picture's
+ * brightness (linear) is raised to this power before setting the luminance at
+ * each pixel. 1 is the picture's own range of luminance.
+ */
+export const DEFAULT_MOON = { luminance: 2500, contrast: 3 };
+// The moon's colors are worked out for bands of this many rows, which the
+// sky behind barely changes across
+const MOON_ROW_STEP = 4;
+
 // Share of the screen's height over which a layer's boost fades in and out as
 // the sun passes its band's edge (about 4° of sun elevation)
 const BOOST_BAND_FADE = 0.05;
@@ -595,6 +607,75 @@ function colorBlend(light, color, amount) {
   for (let channel = 0; channel < 3; channel++) {
     light[channel] += (color[channel] * scale - light[channel]) * amount;
   }
+}
+
+/**
+ * Draws the moon into `pixels` (RGBA, width × height) from `image` (the moon
+ * picture's RGBA pixels, the same size), with its top row `top` rows down a
+ * screen `screenHeight` rows tall. It goes over the sky and stars, hiding the
+ * stars behind it, and its light adds to the sky's, as moonlight does: each
+ * pixel shows the sky's luminance plus the moon's through the sky's exposure,
+ * so the moon is faint against a bright day sky and bright at night. Its
+ * luminance is settings.moon.luminance on average, varying with the picture's
+ * brightness raised to settings.moon.contrast. It's neutral gray, as the moon
+ * nearly is.
+ */
+export function renderMoon(pixels, image, width, height, top, screenHeight, settings) {
+  const { toScreen, skyAt } = prepareScene(settings);
+  const { luminance, contrast } = { ...DEFAULT_MOON, ...settings.moon };
+
+  // Each pixel's brightness as a level (0–255, on-screen), and each level's
+  // share of the moon's average luminance
+  const levels = new Uint8Array(width * height);
+  const coverage = new Float64Array(256);
+  for (let i = 0; i < width * height; i++) {
+    const linear = luminanceOf([0, 1, 2].map((channel) => decodeSrgb(image[i * 4 + channel] / 255)));
+    levels[i] = Math.round(255 * encodeSrgb(linear));
+    coverage[levels[i]] += image[i * 4 + 3] / 255;
+  }
+  const weights = Array.from({ length: 256 }, (_, level) => decodeSrgb(level / 255) ** contrast);
+  const covered = coverage.reduce((sum, value) => sum + value, 0);
+  const average = coverage.reduce((sum, value, level) => sum + value * weights[level], 0) / covered || 1;
+
+  // The on-screen color for each level, for the band of rows being drawn
+  const shown = new Uint8ClampedArray(256 * 3);
+  for (let row = 0; row < height; row++) {
+    if (row % MOON_ROW_STEP === 0) {
+      const up = clamp(1 - (top + row + MOON_ROW_STEP / 2) / screenHeight, 0, 1);
+      const sky = skyAt(up);
+      // The sky's color at full brightness, and its luminance (as a share of white)
+      const skyColor = fullBrightnessColor(sky.rgb);
+      const skyWeight = luminanceOf(skyColor);
+      for (let level = 0; level < 256; level++) {
+        const light = sky.luminance + (luminance * weights[level]) / average;
+        // The sky's color and the moon's neutral gray, mixed by the light each gives
+        const skyShare = light > 0 ? sky.luminance / light : 1;
+        const mixed = skyColor.map((value) => (skyShare * value) / skyWeight + (1 - skyShare));
+        const peak = Math.max(...mixed);
+        const rgb = withScreenBrightness(
+          mixed.map((value) => value / peak),
+          toScreen(light),
+        );
+        for (let channel = 0; channel < 3; channel++) {
+          shown[level * 3 + channel] = toScreenValue(rgb[channel], channel);
+        }
+      }
+    }
+    for (let column = 0; column < width; column++) {
+      const i = row * width + column;
+      const level = levels[i];
+      for (let channel = 0; channel < 3; channel++) pixels[i * 4 + channel] = shown[level * 3 + channel];
+      pixels[i * 4 + 3] = image[i * 4 + 3];
+    }
+  }
+}
+
+// A linear-light color at full on-screen brightness (its brightest channel
+// at 1), keeping its hue and saturation. Black becomes white.
+function fullBrightnessColor(rgb) {
+  const encoded = rgb.map(encodeSrgb);
+  const peak = Math.max(...encoded);
+  return peak > 0 ? encoded.map((value) => decodeSrgb(value / peak)) : [1, 1, 1];
 }
 
 function luminanceOf([red, green, blue]) {

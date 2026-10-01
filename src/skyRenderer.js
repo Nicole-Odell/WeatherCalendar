@@ -1,11 +1,13 @@
 import { createCloudRenderer } from './cloudsGL.js';
 import { readableTextColor } from './color.js';
 import { createCpuCloudRenderer } from './cpuClouds.js';
+import moonUrl from '../assets/images/moon.png';
 import {
   cloudShaderData,
   computeRows,
   drawStars,
   renderHazeColumn,
+  renderMoon,
   renderSkyColumn,
   renderStarGlow,
   sceneAverageColor,
@@ -17,6 +19,14 @@ import {
 // haze worked out at. The browser smooths them up to full size, which suits
 // soft clouds and smooth gradients and keeps drawing fast.
 const RENDER_SCALE = 0.25;
+// Where the moon is: the distance from the top of the screen to its top edge,
+// and from the right of the screen to its right edge, as shares of the
+// screen's height and width, and its radius
+// as a share of the screen's height. (Its real size, about 0.5° of the 75° of
+// sky shown, would be too small to see much of.)
+const MOON_FROM_TOP = 0.35;
+const MOON_FROM_RIGHT = 0.1;
+const MOON_RADIUS = 0.1;
 // Width in pixels the star glow is drawn at before being smoothed up
 const STAR_GLOW_WIDTH = 240;
 // How often a new frame of cloud motion is drawn (ms), faded in over the same time
@@ -36,7 +46,8 @@ const CPU_RECOLOR_STEP = 1;
 /**
  * Draws the sky, stars, clouds and haze on three canvases stacked with normal
  * blending, either on the page or on a worker thread (see skyWorker.js):
- * 1. `background`: the sky, with the stars added over it with a screen blend
+ * 1. `background`: the sky, with the stars added over it with a screen blend,
+ *    and the moon over them (see renderMoon)
  * 2. `clouds`: the cloud layers, drawn with WebGL if the GPU is fast enough,
  *    otherwise on the CPU (see cpuClouds.js)
  * 3. `haze`: the haze, a column 1 pixel wide that the page stretches
@@ -68,6 +79,10 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
     haze: createLayer(canvases.haze),
     // The stars shown, their colors, glow and key (to tell when they change)
     stars: { canvas: createCanvas(), colors: null, glow: null, key: undefined, changed: false },
+    // The moon picture once loaded, its pixels at the size drawn, the moon as
+    // drawn, where it goes (top left, in screen pixels) and its key (to tell
+    // when it changes)
+    moon: { picture: null, image: null, canvas: createCanvas(), left: 0, top: 0, key: null, changed: false },
     // How the clouds are drawn, once chosen: 'webgl' or 'cpu', with the
     // renderer (from cloudsGL.js or cpuClouds.js) and how long the GPU took
     // to draw a cloud frame (null without WebGL)
@@ -90,7 +105,7 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
 
   // Shows each fade as of now, continuing each animation frame until they're done
   function paint() {
-    const { sky, haze, stars, cloudRenderer } = state;
+    const { sky, haze, stars, moon, cloudRenderer } = state;
     const now = performance.now();
     let fading = false;
 
@@ -102,11 +117,13 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
       if (progress < 1) fading = true;
     }
     if (cloudRenderer?.paint(now)) fading = true;
-    const backgroundChanged = sky.changed || stars.changed;
+    const backgroundChanged = sky.changed || stars.changed || moon.changed;
     sky.changed = false;
     stars.changed = false;
+    moon.changed = false;
 
-    // The sky stretched across the screen, with the stars' light added over it
+    // The sky stretched across the screen, with the stars' light added over
+    // it, and the moon over them (its colors already include the sky's light)
     if (backgroundChanged) {
       const canvas = canvases.background;
       const context = canvas.getContext('2d');
@@ -114,6 +131,8 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
       context.drawImage(sky.canvas, 0, 0, canvas.width, canvas.height);
       context.globalCompositeOperation = 'screen';
       context.drawImage(stars.canvas, 0, 0, canvas.width, canvas.height);
+      context.globalCompositeOperation = 'source-over';
+      if (moon.key !== null) context.drawImage(moon.canvas, moon.left, moon.top);
     }
 
     state.animationFrame = fading ? requestFrame(paint) : 0;
@@ -261,6 +280,61 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
     return true;
   }
 
+  /**
+   * Draws the moon for the sky behind it, if that or the moon's settings
+   * changed. `skyColumn` is the sky as drawn (at the clouds' resolution).
+   */
+  function drawMoon(settings, skyColumn) {
+    const { moon } = state;
+    if (!moon.picture) return false;
+    const { fullWidth, fullHeight, cloudHeight } = sizes();
+    const diameter = Math.max(1, Math.round(2 * MOON_RADIUS * fullHeight));
+    if (moon.image?.width !== diameter) moon.image = scaledPicture(moon.picture, diameter);
+    const { width, height, data } = moon.image;
+    const left = Math.round(fullWidth * (1 - MOON_FROM_RIGHT) - width);
+    const top = Math.round(fullHeight * MOON_FROM_TOP);
+    // The sky rows behind the moon, which are all of the sky it depends on
+    const firstRow = Math.max(0, Math.floor((top / fullHeight) * cloudHeight));
+    const lastRow = Math.min(cloudHeight, Math.ceil(((top + height) / fullHeight) * cloudHeight) + 1);
+    const key = JSON.stringify([
+      left,
+      top,
+      fullHeight,
+      settings.moon,
+      settings.exposure,
+      Array.from(skyColumn.subarray(firstRow * 4, lastRow * 4)),
+    ]);
+    if (key === moon.key) return false;
+    const image = new ImageData(width, height);
+    renderMoon(image.data, data, width, height, top, fullHeight, settings);
+    resize(moon.canvas, width, height);
+    moon.canvas.getContext('2d').putImageData(image, 0, 0);
+    Object.assign(moon, { left, top, key, changed: true });
+    return true;
+  }
+
+  // Loads the moon picture's pixels, then draws the scene again with it
+  async function loadMoon() {
+    try {
+      state.moon.picture = await createImageBitmap(await (await fetch(moonUrl)).blob());
+      if (state.props) drawAll();
+    } catch (error) {
+      console.error('The moon picture could not be loaded:', error);
+    }
+  }
+  loadMoon();
+
+  // The pixels of `picture` smoothly scaled to `size` × `size`
+  function scaledPicture(picture, size) {
+    const canvas = createCanvas();
+    resize(canvas, size, size);
+    const context = canvas.getContext('2d');
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = 'high';
+    context.drawImage(picture, 0, 0, size, size);
+    return context.getImageData(0, 0, size, size);
+  }
+
   // Draws every layer for the current settings, fading them in
   function drawAll() {
     const started = performance.now();
@@ -285,6 +359,9 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
     const starsRedrawn = drawStarLayer(settings);
     const starsDone = performance.now();
 
+    const moonRedrawn = drawMoon(settings, skyColumn);
+    const moonDone = performance.now();
+
     const cloudsRedrawn = drawClouds(settings, cloudShaderData(settings, cloudHeight, rows), rows, fadeDuration);
     updateAnimation();
     startPainting();
@@ -305,7 +382,9 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
           skyMs: skyDone - started,
           starsMs: starsDone - skyDone,
           starsRedrawn,
-          cloudsMs: cloudsDone - starsDone,
+          moonMs: moonDone - starsDone,
+          moonRedrawn,
+          cloudsMs: cloudsDone - moonDone,
           cloudsRedrawn,
           averageMs: done - cloudsDone,
         },

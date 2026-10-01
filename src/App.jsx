@@ -6,6 +6,7 @@ import {
   DEFAULT_CLOUD_GLOW,
   DEFAULT_CLOUD_LIGHTING,
   DEFAULT_HAZE_CONTRAST,
+  DEFAULT_MOON,
 } from './skyImage.js';
 import { toImperial } from './units.js';
 
@@ -181,7 +182,8 @@ function RenderStatus() {
       <p>
         Last full update: {milliseconds(fullUpdate.totalMs)} on the {thread} (sky and haze{' '}
         {milliseconds(fullUpdate.skyMs)}, stars {milliseconds(fullUpdate.starsMs)}
-        {fullUpdate.starsRedrawn ? ', redrawn' : ', unchanged'}, clouds{' '}
+        {fullUpdate.starsRedrawn ? ', redrawn' : ', unchanged'}, moon {milliseconds(fullUpdate.moonMs)}
+        {fullUpdate.moonRedrawn ? ', redrawn' : ', unchanged'}, clouds{' '}
         {milliseconds(fullUpdate.cloudsMs)}
         {fullUpdate.cloudsRedrawn ? ', redrawn' : ', unchanged'}, text color{' '}
         {milliseconds(fullUpdate.averageMs)})
@@ -362,6 +364,13 @@ export default function App() {
     max: String(DEFAULT_HAZE_CONTRAST.max),
   });
   const [hazeContrastError, setHazeContrastError] = useState(null);
+  // The moon's luminance and contrast, and what's in their inputs until applied
+  const [moon, setMoon] = useState(DEFAULT_MOON);
+  const [moonInputs, setMoonInputs] = useState({
+    luminance: String(DEFAULT_MOON.luminance),
+    contrast: String(DEFAULT_MOON.contrast),
+  });
+  const [moonError, setMoonError] = useState(null);
   // Glow on thin cloud edges, and what's in its inputs until applied
   const [cloudGlow, setCloudGlow] = useState(DEFAULT_CLOUD_GLOW);
   const [cloudGlowInputs, setCloudGlowInputs] = useState(() =>
@@ -496,6 +505,17 @@ export default function App() {
     setHazeContrast({ min, max });
   }
 
+  function applyMoon() {
+    const luminance = Number(moonInputs.luminance);
+    const contrast = Number(moonInputs.contrast);
+    if (!Number.isFinite(luminance) || !Number.isFinite(contrast) || luminance < 0 || contrast < 0) {
+      setMoonError('Both values must be numbers of 0 or more.');
+      return;
+    }
+    setMoonError(null);
+    setMoon({ luminance, contrast });
+  }
+
   function applyCloudBrightness() {
     const pivot = Number(cloudBrightnessInputs.pivot);
     const exponent = Number(cloudBrightnessInputs.exponent);
@@ -560,6 +580,7 @@ export default function App() {
         clouds={clouds}
         cloudBrightness={cloudBrightness}
         hazeContrast={hazeContrast}
+        moon={moon}
         cloudSpeed={cloudSpeed}
         onTextColor={setTextColor}
       />
@@ -755,6 +776,42 @@ export default function App() {
             </button>
           </div>
           {hazeContrastError && <p>Haze contrast error: {hazeContrastError}</p>}
+
+          <h3>Moon</h3>
+          <div className="setting-row">
+            <label>
+              Moon luminance:{' '}
+              <input
+                type="number"
+                min="0"
+                step="any"
+                value={moonInputs.luminance}
+                onChange={(event) => setMoonInputs({ ...moonInputs, luminance: event.target.value })}
+              />{' '}
+              cd/m²
+            </label>{' '}
+            <label>
+              contrast:{' '}
+              <input
+                type="number"
+                min="0"
+                step="any"
+                value={moonInputs.contrast}
+                onChange={(event) => setMoonInputs({ ...moonInputs, contrast: event.target.value })}
+              />
+            </label>{' '}
+            <button
+              type="button"
+              onClick={applyMoon}
+              disabled={
+                Number(moonInputs.luminance) === moon.luminance &&
+                Number(moonInputs.contrast) === moon.contrast
+              }
+            >
+              Apply
+            </button>
+          </div>
+          {moonError && <p>Moon error: {moonError}</p>}
 
           <h3>Cloud Lighting</h3>
           <div className="setting-row">

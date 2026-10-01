@@ -45,8 +45,18 @@ export default function SkyCanvas({ onTextColor, onStatus, cloudSpeed, fadeDurat
     };
   }, []);
 
-  const { colors, sunlight, sunElevation, exposure, clouds, cloudBrightness, cloudLighting, cloudGlow, hazeContrast } =
-    settings;
+  const {
+    colors,
+    sunlight,
+    sunElevation,
+    exposure,
+    clouds,
+    cloudBrightness,
+    cloudLighting,
+    cloudGlow,
+    hazeContrast,
+    moon,
+  } = settings;
   const { total, low, mid, high } = clouds;
   useEffect(() => {
     renderer.current.setScene({
@@ -60,6 +70,7 @@ export default function SkyCanvas({ onTextColor, onStatus, cloudSpeed, fadeDurat
         cloudLighting,
         cloudGlow,
         hazeContrast,
+        moon,
       },
       windowSize,
       fadeDuration,
@@ -78,6 +89,7 @@ export default function SkyCanvas({ onTextColor, onStatus, cloudSpeed, fadeDurat
     cloudLighting,
     cloudGlow,
     hazeContrast,
+    moon,
     fadeDuration,
   ]);
 
