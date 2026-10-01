@@ -76,6 +76,13 @@ const GLOW_FIELDS_BY_MODE = {
   mirrored: Object.keys(GLOW_FIELDS),
   scattering: ['width', 'strength'],
 };
+// Moon settings, with labels and units
+const MOON_FIELDS = {
+  luminance: { label: 'Full moon luminance', unit: 'cd/m²' },
+  contrast: { label: 'Contrast' },
+  glow: { label: 'Glow (share of the lit surface’s luminance where it starts)' },
+  glowWidth: { label: 'Glow reach', unit: 'moon radii' },
+};
 const NO_CLOUDS = { total: 0, low: 0, mid: 0, high: 0 };
 
 function cloudsFromWeather(current) {
@@ -132,8 +139,9 @@ const milliseconds = (value) => `${value.toFixed(1)} ms`;
 const skyStore = createStore(null);
 const statusStore = createStore(null);
 
-// The sky behind the page, drawn from the latest sky colors
-const LiveSkyCanvas = memo(function LiveSkyCanvas(props) {
+// The sky behind the page, drawn from the latest sky colors, with the moon
+// where the server says it is
+const LiveSkyCanvas = memo(function LiveSkyCanvas({ moon, ...props }) {
   const sky = useStore(skyStore);
   if (!sky) return null;
   return (
@@ -143,10 +151,24 @@ const LiveSkyCanvas = memo(function LiveSkyCanvas(props) {
       sunElevation={sky.sun.elevation}
       fadeDuration={SKY_FADE}
       onStatus={statusStore.set}
+      moon={{ ...moon, ...sky.moon }}
       {...props}
     />
   );
 });
+
+// Names of the moon's phases, by where its phase (0–1) is nearest
+const MOON_PHASE_NAMES = [
+  'new moon',
+  'waxing crescent',
+  'first quarter',
+  'waxing gibbous',
+  'full moon',
+  'waning gibbous',
+  'last quarter',
+  'waning crescent',
+];
+const moonPhaseName = (phase) => MOON_PHASE_NAMES[Math.round(phase * 8) % 8];
 
 // Where the sun is, and the atmosphere the sky colors were calculated with
 function SkyInfo() {
@@ -165,6 +187,13 @@ function SkyInfo() {
           {sky.atmosphere.conditions.aerosolOpticalDepth}, built{' '}
           {new Date(sky.atmosphere.builtAt).toLocaleTimeString()}
           {sky.atmosphere.rebuilding && ' (rebuilding for new weather)'}
+        </p>
+      )}
+      {sky.moon && (
+        <p>
+          Moon at {sky.moon.altitude.toFixed(1)}° altitude
+          {sky.moon.phase !== null &&
+            `, ${moonPhaseName(sky.moon.phase)} (${sky.moon.phase.toFixed(3)} through its cycle)`}
         </p>
       )}
     </>
@@ -364,12 +393,11 @@ export default function App() {
     max: String(DEFAULT_HAZE_CONTRAST.max),
   });
   const [hazeContrastError, setHazeContrastError] = useState(null);
-  // The moon's luminance and contrast, and what's in their inputs until applied
+  // The moon's settings, and what's in their inputs until applied
   const [moon, setMoon] = useState(DEFAULT_MOON);
-  const [moonInputs, setMoonInputs] = useState({
-    luminance: String(DEFAULT_MOON.luminance),
-    contrast: String(DEFAULT_MOON.contrast),
-  });
+  const [moonInputs, setMoonInputs] = useState(() =>
+    Object.fromEntries(Object.entries(DEFAULT_MOON).map(([name, value]) => [name, String(value)])),
+  );
   const [moonError, setMoonError] = useState(null);
   // Glow on thin cloud edges, and what's in its inputs until applied
   const [cloudGlow, setCloudGlow] = useState(DEFAULT_CLOUD_GLOW);
@@ -506,14 +534,15 @@ export default function App() {
   }
 
   function applyMoon() {
-    const luminance = Number(moonInputs.luminance);
-    const contrast = Number(moonInputs.contrast);
-    if (!Number.isFinite(luminance) || !Number.isFinite(contrast) || luminance < 0 || contrast < 0) {
-      setMoonError('Both values must be numbers of 0 or more.');
+    const values = Object.fromEntries(
+      Object.entries(moonInputs).map(([name, value]) => [name, Number(value)]),
+    );
+    if (Object.values(values).some((value) => !Number.isFinite(value) || value < 0)) {
+      setMoonError('All values must be numbers of 0 or more.');
       return;
     }
     setMoonError(null);
-    setMoon({ luminance, contrast });
+    setMoon(values);
   }
 
   function applyCloudBrightness() {
@@ -778,35 +807,20 @@ export default function App() {
           {hazeContrastError && <p>Haze contrast error: {hazeContrastError}</p>}
 
           <h3>Moon</h3>
+          {Object.entries(MOON_FIELDS).map(([name, { label, unit }]) => (
+            <NumberRow
+              key={name}
+              label={label}
+              unit={unit}
+              value={moonInputs[name]}
+              onChange={(value) => setMoonInputs({ ...moonInputs, [name]: value })}
+            />
+          ))}
           <div className="setting-row">
-            <label>
-              Moon luminance:{' '}
-              <input
-                type="number"
-                min="0"
-                step="any"
-                value={moonInputs.luminance}
-                onChange={(event) => setMoonInputs({ ...moonInputs, luminance: event.target.value })}
-              />{' '}
-              cd/m²
-            </label>{' '}
-            <label>
-              contrast:{' '}
-              <input
-                type="number"
-                min="0"
-                step="any"
-                value={moonInputs.contrast}
-                onChange={(event) => setMoonInputs({ ...moonInputs, contrast: event.target.value })}
-              />
-            </label>{' '}
             <button
               type="button"
               onClick={applyMoon}
-              disabled={
-                Number(moonInputs.luminance) === moon.luminance &&
-                Number(moonInputs.contrast) === moon.contrast
-              }
+              disabled={Object.entries(moonInputs).every(([name, value]) => Number(value) === moon[name])}
             >
               Apply
             </button>

@@ -7,6 +7,7 @@ import {
   computeRows,
   drawStars,
   renderHazeColumn,
+  moonGlowMargin,
   renderMoon,
   renderSkyColumn,
   renderStarGlow,
@@ -19,14 +20,18 @@ import {
 // haze worked out at. The browser smooths them up to full size, which suits
 // soft clouds and smooth gradients and keeps drawing fast.
 const RENDER_SCALE = 0.25;
-// Where the moon is: the distance from the top of the screen to its top edge,
-// and from the right of the screen to its right edge, as shares of the
-// screen's height and width, and its radius
-// as a share of the screen's height. (Its real size, about 0.5° of the 75° of
-// sky shown, would be too small to see much of.)
-const MOON_FROM_TOP = 0.35;
-const MOON_FROM_RIGHT = 0.1;
+// The moon: its radius as a share of the screen's height, and the distance
+// from the right of the screen to its right edge as a share of the screen's
+// width. Its height follows its altitude, from its center on the bottom of the
+// screen (the horizon) at 0° to its top edge at the top of the screen at 90°.
 const MOON_RADIUS = 0.05;
+const MOON_FROM_RIGHT = 0.1;
+// Altitude (degrees) the moon is shown at until the server has given one
+const DEFAULT_MOON_ALTITUDE = 45;
+// As the moon rises and sets, it's only drawn again once it has moved this
+// many pixels (or the sky or its settings change); until then the drawing
+// just moves with it
+const MOON_REDRAW_MOVE = 8;
 // Width in pixels the star glow is drawn at before being smoothed up
 const STAR_GLOW_WIDTH = 240;
 // How often a new frame of cloud motion is drawn (ms), faded in over the same time
@@ -288,28 +293,50 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
     const { moon } = state;
     if (!moon.picture) return false;
     const { fullWidth, fullHeight, cloudHeight } = sizes();
-    const diameter = Math.max(1, Math.round(2 * MOON_RADIUS * fullHeight));
+    const radius = MOON_RADIUS * fullHeight;
+    const diameter = Math.max(1, Math.round(2 * radius));
     if (moon.image?.width !== diameter) moon.image = scaledPicture(moon.picture, diameter);
-    const { width, height, data } = moon.image;
-    const left = Math.round(fullWidth * (1 - MOON_FROM_RIGHT) - width);
-    const top = Math.round(fullHeight * MOON_FROM_TOP);
-    // The sky rows behind the moon, which are all of the sky it depends on
-    const firstRow = Math.max(0, Math.floor((top / fullHeight) * cloudHeight));
-    const lastRow = Math.min(cloudHeight, Math.ceil(((top + height) / fullHeight) * cloudHeight) + 1);
+    // The moon and its glow, on a square canvas centered on the moon
+    const size = diameter + 2 * moonGlowMargin(radius, settings);
+    const altitude = settings.moon.altitude ?? DEFAULT_MOON_ALTITUDE;
+    const centerX = fullWidth * (1 - MOON_FROM_RIGHT) - radius;
+    const centerY = fullHeight - (altitude / 90) * (fullHeight - radius);
+    const left = Math.round(centerX - size / 2);
+    const top = Math.round(centerY - size / 2);
+    // Below the screen (with the moon below the horizon), there's nothing to draw
+    if (top >= fullHeight) {
+      const changed = moon.key !== null;
+      Object.assign(moon, { key: null, changed: moon.changed || changed });
+      return changed;
+    }
+    // Where it's drawn for: where it was last drawn, if it's only moved a little
+    const drawTop = moon.key !== null && Math.abs(top - moon.drawnTop) < MOON_REDRAW_MOVE ? moon.drawnTop : top;
+    // The sky rows behind the moon, which are all of the sky it depends on.
+    // The phase moves on very slowly, so it's only redrawn for steps of 0.0001.
+    const firstRow = Math.max(0, Math.floor((drawTop / fullHeight) * cloudHeight));
+    const lastRow = Math.min(cloudHeight, Math.ceil(((drawTop + size) / fullHeight) * cloudHeight) + 1);
+    const { altitude: _, phase, ...moonSettings } = settings.moon;
     const key = JSON.stringify([
       left,
-      top,
+      drawTop,
+      size,
       fullHeight,
-      settings.moon,
+      moonSettings,
+      phase === null || phase === undefined ? null : Math.round(phase * 10000),
       settings.exposure,
       Array.from(skyColumn.subarray(firstRow * 4, lastRow * 4)),
     ]);
-    if (key === moon.key) return false;
-    const image = new ImageData(width, height);
-    renderMoon(image.data, data, width, height, top, fullHeight, settings);
-    resize(moon.canvas, width, height);
+    if (key === moon.key) {
+      // Nothing to draw again, though it may have moved a little
+      if (top === moon.top) return false;
+      Object.assign(moon, { top, changed: true });
+      return true;
+    }
+    const image = new ImageData(size, size);
+    renderMoon(image.data, size, moon.image.data, diameter, top, fullHeight, settings);
+    resize(moon.canvas, size, size);
     moon.canvas.getContext('2d').putImageData(image, 0, 0);
-    Object.assign(moon, { left, top, key, changed: true });
+    Object.assign(moon, { left, top, drawnTop: top, key, changed: true });
     return true;
   }
 

@@ -105,6 +105,82 @@ async function fetchSunTimes(date) {
   };
 }
 
+/**
+ * Returns the moon's position at the location as { altitude, distance,
+ * longitude }: altitude in degrees above the horizon as seen from here
+ * (without refraction), distance from Earth's center in km, and ecliptic
+ * longitude in degrees. Uses the main terms of Meeus's lunar series
+ * (Astronomical Algorithms, chapter 47), good to about 0.1°.
+ */
+export function GetMoonPosition(date = new Date()) {
+  const days = date.getTime() / 86400000 + 2440587.5 - 2451545; // since J2000
+  const centuries = days / 36525;
+  const meanLongitude = 218.3164477 + 481267.88123421 * centuries;
+  const elongation = toRadians(297.8501921 + 445267.1114034 * centuries);
+  const sunAnomaly = toRadians(357.5291092 + 35999.0502909 * centuries);
+  const moonAnomaly = toRadians(134.9633964 + 477198.8675055 * centuries);
+  const latitudeArgument = toRadians(93.272095 + 483202.0175233 * centuries);
+  const D = elongation;
+  const M = sunAnomaly;
+  const Mm = moonAnomaly;
+  const F = latitudeArgument;
+
+  const longitude = toRadians(
+    meanLongitude +
+      6.288774 * Math.sin(Mm) +
+      1.274027 * Math.sin(2 * D - Mm) +
+      0.658314 * Math.sin(2 * D) +
+      0.213618 * Math.sin(2 * Mm) -
+      0.185116 * Math.sin(M) -
+      0.114332 * Math.sin(2 * F) +
+      0.058793 * Math.sin(2 * D - 2 * Mm) +
+      0.057066 * Math.sin(2 * D - M - Mm) +
+      0.053322 * Math.sin(2 * D + Mm) +
+      0.045758 * Math.sin(2 * D - M),
+  );
+  const latitudeOnEcliptic = toRadians(
+    5.128122 * Math.sin(F) +
+      0.280602 * Math.sin(Mm + F) +
+      0.277693 * Math.sin(Mm - F) +
+      0.173237 * Math.sin(2 * D - F) +
+      0.055413 * Math.sin(2 * D - Mm + F) +
+      0.046271 * Math.sin(2 * D - Mm - F),
+  );
+  const distance =
+    385000.56 -
+    20905.355 * Math.cos(Mm) -
+    3699.111 * Math.cos(2 * D - Mm) -
+    2955.968 * Math.cos(2 * D) -
+    569.925 * Math.cos(2 * Mm);
+
+  // Ecliptic to equatorial coordinates
+  const obliquity = toRadians(23.439291 - 0.0130042 * centuries);
+  const rightAscension = Math.atan2(
+    Math.sin(longitude) * Math.cos(obliquity) - Math.tan(latitudeOnEcliptic) * Math.sin(obliquity),
+    Math.cos(longitude),
+  );
+  const declination = Math.asin(
+    Math.sin(latitudeOnEcliptic) * Math.cos(obliquity) +
+      Math.cos(latitudeOnEcliptic) * Math.sin(obliquity) * Math.sin(longitude),
+  );
+
+  // Altitude from Earth's center, then lowered by the moon's parallax, since
+  // it's seen from Earth's surface (about 1° at the horizon)
+  const siderealTime = toRadians(280.46061837 + 360.98564736629 * days + LONGITUDE);
+  const hourAngle = siderealTime - rightAscension;
+  const latitude = toRadians(LATITUDE);
+  const geocentric = Math.asin(
+    Math.sin(latitude) * Math.sin(declination) +
+      Math.cos(latitude) * Math.cos(declination) * Math.cos(hourAngle),
+  );
+  const parallax = Math.asin(6378.14 / distance);
+  return {
+    altitude: toDegrees(geocentric - parallax * Math.cos(geocentric)),
+    distance,
+    longitude: mod(toDegrees(longitude), 360),
+  };
+}
+
 // Today's date on this computer, as YYYY-MM-DD
 function getTodaysDate() {
   const now = new Date();

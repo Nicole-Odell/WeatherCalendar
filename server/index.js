@@ -23,10 +23,14 @@ function atmosphereWeather(current) {
   };
 }
 
+// The latest weather, for the moon's phase
+let latestWeather = null;
+
 // Refreshes the weather if it's due, and rebuilds the sky's atmosphere tables
 // in the background if it has changed significantly
 async function checkWeather(forceRefresh = false) {
   const weather = await WeatherManager.GetCurrentWeatherData(forceRefresh);
+  latestWeather = weather;
   SkyColorManager.UpdateAtmosphere(atmosphereWeather(weather.current)).catch((error) =>
     console.error('Failed to build the atmosphere tables:', error),
   );
@@ -65,9 +69,10 @@ app.get('/api/time-of-day/sun-times', async (req, res) => {
   }
 });
 
-// Clear-sky colors looking toward the sun, and the color of direct sunlight by
-// height. The sun's position is for `time` (an ISO 8601 date and time) if it's
-// given, or for now. The atmosphere is from the weather the atmosphere tables
+// Clear-sky colors looking toward the sun, the color of direct sunlight by
+// height, and the moon's altitude (degrees) and phase (0–1, 0.5 is full). The
+// sun's and moon's positions are for `time` (an ISO 8601 date and time) if
+// it's given, or for now. The atmosphere is from the weather the atmosphere tables
 // in use were built from, which `atmosphere` gives, until new ones are built.
 app.get('/api/sky/colors', async (req, res) => {
   const time = req.query.time ? new Date(req.query.time) : new Date();
@@ -83,9 +88,14 @@ app.get('/api/sky/colors', async (req, res) => {
     const conditions = { sunElevation: sun.elevation, sunDistance: sun.distance };
     const colors = SkyColorManager.CalculateSkyColors(conditions);
     const sunlight = SkyColorManager.CalculateSunlight(conditions);
+    const moon = {
+      altitude: TimeOfDayManager.GetMoonPosition(time).altitude,
+      phase: latestWeather ? WeatherManager.GetMoonPhase(latestWeather.moonPhases, time) : null,
+    };
     res.json({
       time: time.toISOString(),
       sun,
+      moon,
       colors,
       sunlight,
       atmosphere: SkyColorManager.GetAtmosphereStatus(),
