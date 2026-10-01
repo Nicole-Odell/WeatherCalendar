@@ -1,10 +1,10 @@
 import { createCloudRenderer } from './cloudsGL.js';
 import { readableTextColor } from './color.js';
+import { createCpuCloudRenderer } from './cpuClouds.js';
 import {
   cloudShaderData,
   computeRows,
   drawStars,
-  renderClouds,
   renderHazeColumn,
   renderSkyColumn,
   renderStarGlow,
@@ -21,8 +21,9 @@ const RENDER_SCALE = 0.25;
 const STAR_GLOW_WIDTH = 240;
 // How often a new frame of cloud motion is drawn (ms), faded in over the same time
 const CLOUD_INTERVAL = 250;
-// Cloud motion only runs if the GPU draws a cloud frame within this many ms,
-// leaving it plenty of time for everything else between frames
+// The clouds are drawn with WebGL (with motion) if the GPU draws a cloud frame
+// within this many ms, leaving it plenty of time for everything else between
+// frames; otherwise they're drawn on the CPU
 const CLOUD_ANIMATION_BUDGET = 50;
 // Sky and haze changes of at most this many steps (of 255) are shown straight
 // away: too small to see, so not worth the work of fading
@@ -32,11 +33,13 @@ const INSTANT_CHANGE = 2;
  * Draws the sky, stars, clouds and haze on three canvases stacked with normal
  * blending, either on the page or on a worker thread (see skyWorker.js):
  * 1. `background`: the sky, with the stars added over it with a screen blend
- * 2. `clouds`: the cloud layers, drawn with WebGL (or on the CPU without it)
+ * 2. `clouds`: the cloud layers, drawn with WebGL if the GPU is fast enough,
+ *    otherwise on the CPU (see cpuClouds.js)
  * 3. `haze`: the haze, a column 1 pixel wide that the page stretches
  * `createCanvas()` makes an off-screen canvas for drawing the sky and stars
  * into. `report(message)` passes back { textColor } (the text color that's
  * easiest to read over the scene) and { status } (renderer and timings).
+ * `forceCpuClouds` draws the clouds on the CPU even if WebGL is fast enough.
  *
  * Each redraw fades in from what's showing. Only pixels that differ between
  * the two frames change, and each moves straight from its old value to its
@@ -44,10 +47,11 @@ const INSTANT_CHANGE = 2;
  * is skipped where nothing has changed: the stars are only worked out during
  * twilight (see starsKey), and the clouds only redrawn when their data changes.
  *
- * Cloud motion (a new frame every CLOUD_INTERVAL ms) only runs with WebGL, and
- * only if the GPU is fast enough; otherwise the clouds stay still.
+ * Cloud motion moves the clouds on every CLOUD_INTERVAL ms. With WebGL, each
+ * step is a new frame faded in over that time; on the CPU, each layer's band
+ * is slid across.
  */
-export function createSkyRenderer({ canvases, createCanvas, report }) {
+export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClouds = false }) {
   const requestFrame = globalThis.requestAnimationFrame
     ? (callback) => globalThis.requestAnimationFrame(callback)
     : (callback) => setTimeout(callback, 16);
@@ -57,12 +61,14 @@ export function createSkyRenderer({ canvases, createCanvas, report }) {
 
   const state = {
     sky: createLayer(createCanvas()),
-    clouds: createLayer(canvases.clouds),
     haze: createLayer(canvases.haze),
     // The stars shown, their colors, glow and key (to tell when they change)
     stars: { canvas: createCanvas(), colors: null, glow: null, key: undefined, changed: false },
-    // WebGL cloud drawing, once set up (null if it can't be)
-    cloudRenderer: undefined,
+    // How the clouds are drawn, once chosen: 'webgl' or 'cpu', with the
+    // renderer (from cloudsGL.js or cpuClouds.js) and how long the GPU took
+    // to draw a cloud frame (null without WebGL)
+    cloudMode: undefined,
+    cloudRenderer: null,
     cloudFrameMs: null,
     // The cloud data last drawn, to tell when it changes
     cloudData: null,
@@ -80,12 +86,11 @@ export function createSkyRenderer({ canvases, createCanvas, report }) {
 
   // Shows each fade as of now, continuing each animation frame until they're done
   function paint() {
-    const { sky, clouds, haze, stars, cloudRenderer } = state;
+    const { sky, haze, stars, cloudRenderer } = state;
     const now = performance.now();
     let fading = false;
 
-    const layers = cloudRenderer ? [sky, haze] : [sky, clouds, haze];
-    for (const layer of layers) {
+    for (const layer of [sky, haze]) {
       if (layer.changes.length === 0) continue;
       const progress = fadeProgress(layer.fade, now);
       blendLayer(layer, progress);
@@ -136,7 +141,7 @@ export function createSkyRenderer({ canvases, createCanvas, report }) {
   }
 
   // Starts or stops cloud motion, which runs while there are cloud layers to
-  // move and the GPU is fast enough
+  // move (and, with WebGL, while the GPU is fast enough)
   function updateAnimation() {
     const { low, mid, high } = state.props.settings.clouds;
     const run = state.animating && (low > 0 || mid > 0 || high > 0);
@@ -148,12 +153,41 @@ export function createSkyRenderer({ canvases, createCanvas, report }) {
     }
   }
 
-  // Draws a new frame of cloud motion, fading it in over `duration` ms
+  // Moves the clouds on: with WebGL, a new frame faded in over `duration` ms
   function drawCloudFrame(duration) {
     if (!state.cloudRenderer || !state.cloudData) return;
     const time = cloudTime();
-    state.cloudRenderer.drawFrame({ ...state.props.settings, time }, time, duration);
+    if (state.cloudMode === 'webgl') {
+      state.cloudRenderer.drawFrame({ ...state.props.settings, time }, time, duration);
+    } else {
+      state.cloudRenderer.step(time);
+    }
     startPainting();
+  }
+
+  /**
+   * Chooses how to draw the clouds: with WebGL if the GPU draws a frame within
+   * CLOUD_ANIMATION_BUDGET (timed on a spare canvas, since a canvas can only
+   * ever have one kind of drawing context), otherwise on the CPU
+   */
+  function chooseCloudRenderer(settings, data, width, height) {
+    const trial = forceCpuClouds ? null : createCloudRenderer(createCanvas());
+    if (trial) {
+      trial.setScene(data, width, height);
+      state.cloudFrameMs = trial.measureFrame(settings);
+      trial.dispose();
+      if (state.cloudFrameMs <= CLOUD_ANIMATION_BUDGET) {
+        state.cloudRenderer = createCloudRenderer(canvases.clouds);
+      }
+    }
+    if (state.cloudRenderer) {
+      state.cloudMode = 'webgl';
+      return;
+    }
+    state.cloudMode = 'cpu';
+    state.cloudRenderer = createCpuCloudRenderer(canvases.clouds, createCanvas, () => state.cloudSpeed);
+    state.cloudRenderer.setOnFrame(startPainting);
+    state.animating = true;
   }
 
   /**
@@ -165,11 +199,9 @@ export function createSkyRenderer({ canvases, createCanvas, report }) {
     const resized = state.cloudData?.width !== cloudWidth || state.cloudData?.height !== cloudHeight;
     if (!resized && sameCloudData(data, state.cloudData)) return false;
 
-    if (state.cloudRenderer === undefined) {
-      state.cloudRenderer = createCloudRenderer(canvases.clouds);
-    }
+    if (state.cloudMode === undefined) chooseCloudRenderer(settings, data, cloudWidth, cloudHeight);
     const renderer = state.cloudRenderer;
-    if (renderer) {
+    if (state.cloudMode === 'webgl') {
       renderer.setScene(data, cloudWidth, cloudHeight);
       // Times the GPU at each new size, to decide whether the clouds can move
       if (resized) {
@@ -178,9 +210,7 @@ export function createSkyRenderer({ canvases, createCanvas, report }) {
       }
       renderer.drawFrame(settings, settings.time, duration);
     } else {
-      const next = new Uint8ClampedArray(cloudWidth * cloudHeight * 4);
-      renderClouds(next, cloudWidth, cloudHeight, settings, rows);
-      setLayerFrame(state.clouds, next, cloudWidth, cloudHeight, duration);
+      renderer.setScene(settings, rows, cloudWidth, cloudHeight, duration);
     }
     state.cloudData = { ...data, width: cloudWidth, height: cloudHeight };
     return true;
@@ -260,8 +290,10 @@ export function createSkyRenderer({ canvases, createCanvas, report }) {
 
     report({
       status: {
-        cloudRenderer: state.cloudRenderer ? 'WebGL' : 'CPU (WebGL not available)',
+        cloudRenderer: state.cloudMode === 'webgl' ? 'WebGL' : 'CPU',
         cloudFrameMs: state.cloudFrameMs,
+        cpuClouds:
+          state.cloudMode === 'cpu' ? { ...state.cloudRenderer.timings(), forced: forceCpuClouds } : null,
         animating: state.animating,
         fullUpdate: {
           totalMs: done - started,

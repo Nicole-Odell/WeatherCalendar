@@ -403,6 +403,11 @@ export function createCloudRenderer(canvas) {
       }
       return times.sort((a, b) => a - b)[Math.floor(times.length / 2)];
     },
+
+    // Frees the GPU memory this renderer holds; it can't be used after
+    dispose() {
+      gl.getExtension('WEBGL_lose_context')?.loseContext();
+    },
   };
 }
 

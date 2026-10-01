@@ -209,57 +209,103 @@ export function renderHazeColumn(pixels, height, settings, rows = rowColors(sett
 
 /**
  * Draws the cloud layers into `pixels` (RGBA, width × height), to go over the
- * sky and under the haze. Returns the average color of the whole scene (sky,
- * clouds and haze, without stars), in linear-light sRGB.
+ * sky and under the haze
  */
 export function renderClouds(pixels, width, height, settings, rows = rowColors(settings, height)) {
-  const { scene, sky, cloud, cloudAt, haze, rowHeight, layerAt } = rows;
-  const { cloudMaxOpacity, hazeOpacity } = scene;
-  const lighting = settings.cloudLighting ?? DEFAULT_CLOUD_LIGHTING;
-  const scattering = lighting.mode === 'scattering';
-  const glowWidth = scattering ? 0 : (settings.cloudGlow?.width ?? 0);
-  const glowSettings = { ...DEFAULT_CLOUD_GLOW, ...settings.cloudGlow };
-  const { boost, boostContrast } = glowSettings;
-  // Scattering lighting: how quickly optical thickness grows inside a cloud,
-  // and the depth (noise units) at which it reaches full thickness
-  const rimDepth = Math.max(
-    1e-3,
-    (settings.cloudGlow?.width ?? DEFAULT_CLOUD_GLOW.width) * SCATTERING_RIM_SCALE,
-  );
-  const fullThicknessDepth = scattering ? rimDepth * Math.log(lighting.thickness + 1) : 0;
+  colorClouds(pixels, width, height, settings, rows, cloudShapes(width, height, settings, rows));
+}
+
+/**
+ * Works out the shapes of the cloud layers for an image `width` × `height`
+ * from `rows` (computeRows): the slow part of drawing clouds, since it takes
+ * noise at every pixel. Returns { opacity, thinness, depth } (Float32Arrays,
+ * a value per pixel, as set by cloudShape) for colorClouds. Column c is
+ * (c + firstColumn + 0.5) / height screen heights across, so a negative
+ * firstColumn adds columns off the left of the screen. Only rows from
+ * startRow up to endRow are worked out, into `shapes` if given, so a large
+ * image can be done in pieces.
+ */
+export function cloudShapes(
+  width,
+  height,
+  settings,
+  rows,
+  { firstColumn = 0, startRow = 0, endRow = height, shapes } = {},
+) {
+  const result = shapes ?? {
+    opacity: new Float32Array(width * height),
+    thinness: new Float32Array(width * height),
+    depth: new Float32Array(width * height),
+  };
+  const { scene, rowHeight, layerAt } = rows;
+  const { scattering, glowWidth, fullThicknessDepth } = shapeSettings(settings);
   const shape = { opacity: 0, thinness: 0, depth: 0 };
-  const light = [0, 0, 0];
-  const total = [0, 0, 0];
-  for (let row = 0; row < height; row++) {
+  for (let row = startRow; row < endRow; row++) {
     const up = rowHeight(row);
     const layer = layerAt(up);
-    const glowMatch = layer && !scattering ? glowMatchingCloud(layer.glow, cloud[row]) : null;
-    const glow = glowMatch?.glow;
-    const boostColor = glowMatch ? boostedGlowColor(glow, glowSettings.boostSaturation) : null;
     for (let column = 0; column < width; column++) {
-      if (layer && cloudMaxOpacity > 0) {
-        cloudShape(layer, (column + 0.5) / height, up, glowWidth, shape, fullThicknessDepth);
+      const i = row * width + column;
+      if (layer && scene.cloudMaxOpacity > 0) {
+        cloudShape(layer, (column + firstColumn + 0.5) / height, up, glowWidth, shape, fullThicknessDepth);
       } else {
         shape.opacity = 0;
       }
-      let opacity = cloudMaxOpacity * shape.opacity;
+      result.opacity[i] = shape.opacity;
+      // Thinness and depth only matter where there's cloud
+      result.thinness[i] = shape.opacity > 0 ? shape.thinness : 0;
+      result.depth[i] = shape.opacity > 0 && scattering ? shape.depth : 0;
+    }
+  }
+  return result;
+}
+
+/**
+ * Colors cloud `shapes` (from cloudShapes, width × height) into `pixels`
+ * (RGBA), lit for the scene in `rows` (computeRows), to go over the sky and
+ * under the haze
+ */
+export function colorClouds(pixels, width, height, settings, rows, shapes) {
+  const { scene, sky, cloud, cloudAt, rowHeight, layerAt } = rows;
+  const { cloudMaxOpacity } = scene;
+  const lighting = settings.cloudLighting ?? DEFAULT_CLOUD_LIGHTING;
+  const { scattering, rimDepth } = shapeSettings(settings);
+  const glowSettings = { ...DEFAULT_CLOUD_GLOW, ...settings.cloudGlow };
+  const { boost, boostContrast } = glowSettings;
+  const light = [0, 0, 0];
+  for (let row = 0; row < height; row++) {
+    const layer = layerAt(rowHeight(row));
+    if (!layer) {
+      pixels.fill(0, row * width * 4, (row + 1) * width * 4);
+      continue;
+    }
+    const glowMatch = scattering ? null : glowMatchingCloud(layer.glow, cloud[row]);
+    const glow = glowMatch?.glow;
+    const boostColor = glowMatch ? boostedGlowColor(glow, glowSettings.boostSaturation) : null;
+    for (let column = 0; column < width; column++) {
+      const i = row * width + column;
+      const thinness = shapes.thinness[i];
+      let opacity = cloudMaxOpacity * shapes.opacity[i];
       if (scattering && opacity > 0) {
         // Optical thickness here, which also sets how much of the sky shows
         // through (in place of the soft noise edge)
-        const tau = Math.min(lighting.thickness, Math.exp(shape.depth / rimDepth) - 1);
+        const tau = Math.min(lighting.thickness, Math.exp(shapes.depth[i] / rimDepth) - 1);
         opacity = cloudMaxOpacity * (1 - Math.exp(-tau));
         const color = cloudAt[row](tau);
         for (let channel = 0; channel < 3; channel++) light[channel] = color[channel];
       }
       const alpha = Math.round(255 * opacity);
-      const offset = (row * width + column) * 4;
-      if (!scattering && alpha > 0) {
+      const offset = i * 4;
+      if (alpha === 0) {
+        pixels[offset] = pixels[offset + 1] = pixels[offset + 2] = pixels[offset + 3] = 0;
+        continue;
+      }
+      if (!scattering) {
         // The cloud's own light, plus sunlight glowing through its thin edges,
         // capped at full brightness. Where the glow was given the cloud's
         // color, it's scaled down as a whole instead, so that color holds.
         let peak = 0;
         for (let channel = 0; channel < 3; channel++) {
-          light[channel] = cloud[row][channel] + glow[channel] * shape.thinness;
+          light[channel] = cloud[row][channel] + glow[channel] * thinness;
           peak = Math.max(peak, light[channel]);
         }
         const match = glowMatch.match;
@@ -269,29 +315,65 @@ export function renderClouds(pixels, width, height, settings, rows = rowColors(s
         }
 
         // The boost layer, over the cloud and glow in a color blend
-        if (boost > 0 && layer.boostShare > 0 && shape.thinness > 0) {
+        if (boost > 0 && layer.boostShare > 0 && thinness > 0) {
           const strength =
-            boost *
-            layer.boostShare *
-            clamp(0.5 + (shape.thinness - 0.5) * boostContrast, 0, 1);
+            boost * layer.boostShare * clamp(0.5 + (thinness - 0.5) * boostContrast, 0, 1);
           colorBlend(light, boostColor, strength);
         }
-      } else if (!scattering) {
-        light.fill(0);
       }
       for (let channel = 0; channel < 3; channel++) {
-        const value = light[channel];
-        pixels[offset + channel] = alpha > 0 ? colorOver(sky[row][channel], value, alpha, channel) : 0;
-        // The whole scene at this pixel, for the average
-        let scene = sky[row][channel];
-        scene += (value - scene) * (alpha / 255);
-        scene += (haze[row] - scene) * hazeOpacity;
-        total[channel] += scene;
+        pixels[offset + channel] = colorOver(sky[row][channel], light[channel], alpha, channel);
       }
       pixels[offset + 3] = alpha;
     }
   }
-  return total.map((value) => value / (width * height));
+}
+
+// The settings cloudShapes and colorClouds share: whether lighting is by
+// scattering, how wide the edge glow is, and (for scattering) how quickly
+// optical thickness grows inside a cloud and the depth (noise units) at which
+// it reaches full thickness
+function shapeSettings(settings) {
+  const lighting = settings.cloudLighting ?? DEFAULT_CLOUD_LIGHTING;
+  const scattering = lighting.mode === 'scattering';
+  const rimDepth = Math.max(
+    1e-3,
+    (settings.cloudGlow?.width ?? DEFAULT_CLOUD_GLOW.width) * SCATTERING_RIM_SCALE,
+  );
+  return {
+    scattering,
+    glowWidth: scattering ? 0 : (settings.cloudGlow?.width ?? 0),
+    rimDepth,
+    fullThicknessDepth: scattering ? rimDepth * Math.log(lighting.thickness + 1) : 0,
+  };
+}
+
+/**
+ * Everything the cloud shapes depend on besides the image size and time, as
+ * a string, to tell when cloudShapes needs to run again
+ */
+export function cloudShapeKey(settings) {
+  const { scattering, glowWidth, rimDepth, fullThicknessDepth } = shapeSettings(settings);
+  const { low, mid, high } = settings.clouds;
+  return JSON.stringify([low, mid, high, scattering, glowWidth, rimDepth, fullThicknessDepth]);
+}
+
+/**
+ * The rows of an image `height` rows tall that each cloud layer showing
+ * covers, from `rows` (computeRows), top first: [{ layer, start, end, speed }],
+ * rows from start up to end, with `speed` how fast the layer drifts right in
+ * screen heights per second of cloud time
+ */
+export function cloudBands({ rowHeight, layerAt }, height) {
+  const bands = [];
+  for (let row = 0; row < height; row++) {
+    const layer = layerAt(rowHeight(row));
+    if (!layer) continue;
+    const last = bands[bands.length - 1];
+    if (last?.layer === layer.name && last.end === row) last.end = row + 1;
+    else bands.push({ layer: layer.name, start: row, end: row + 1, speed: layer.speed });
+  }
+  return bands;
 }
 
 /**

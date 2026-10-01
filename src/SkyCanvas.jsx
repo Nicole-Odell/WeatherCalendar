@@ -95,6 +95,9 @@ export default function SkyCanvas({ onTextColor, onStatus, cloudSpeed, fadeDurat
  * which thread it's drawing on.
  */
 function startRenderer(canvases, report) {
+  // Adding ?clouds=cpu to the page's address draws the clouds on the CPU even
+  // where WebGL is fast, for testing
+  const forceCpuClouds = new URLSearchParams(window.location.search).get('clouds') === 'cpu';
   if (typeof Worker !== 'undefined' && 'transferControlToOffscreen' in canvases.background) {
     try {
       const worker = new SkyWorker();
@@ -102,7 +105,7 @@ function startRenderer(canvases, report) {
       for (const [name, canvas] of Object.entries(canvases)) {
         offscreen[name] = canvas.transferControlToOffscreen();
       }
-      worker.postMessage({ type: 'init', canvases: offscreen }, Object.values(offscreen));
+      worker.postMessage({ type: 'init', canvases: offscreen, forceCpuClouds }, Object.values(offscreen));
       worker.onmessage = ({ data }) =>
         report(data.status ? { status: { ...data.status, thread: 'background thread' } } : data);
       worker.onerror = (event) => console.error('Sky worker failed:', event.message);
@@ -118,6 +121,7 @@ function startRenderer(canvases, report) {
   return createSkyRenderer({
     canvases,
     createCanvas: () => document.createElement('canvas'),
+    forceCpuClouds,
     report: (message) =>
       report(message.status ? { status: { ...message.status, thread: 'page thread' } } : message),
   });

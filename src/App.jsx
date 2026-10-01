@@ -174,7 +174,8 @@ function SkyInfo() {
 function RenderStatus() {
   const status = useStore(statusStore);
   if (!status) return null;
-  const { fullUpdate, cloudRenderer, cloudFrameMs, animating, thread } = status;
+  const { fullUpdate, cloudRenderer, cloudFrameMs, cpuClouds, animating, thread } = status;
+  const gpuFrame = cloudFrameMs === null ? null : `${milliseconds(cloudFrameMs)} per frame on the GPU`;
   return (
     <>
       <p>
@@ -187,8 +188,18 @@ function RenderStatus() {
       </p>
       <p>
         Clouds: {cloudRenderer}
-        {cloudFrameMs !== null && `, ${milliseconds(cloudFrameMs)} per frame on the GPU`}, motion{' '}
-        {animating ? 'on' : 'off'}
+        {cpuClouds
+          ? ` (${
+              cpuClouds.forced
+                ? 'set by the address'
+                : gpuFrame
+                  ? `WebGL too slow at ${gpuFrame}`
+                  : 'WebGL not available'
+            }), shapes ${
+              cpuClouds.shapesMs === null ? 'being worked out' : milliseconds(cpuClouds.shapesMs)
+            }, colors ${cpuClouds.colorsMs === null ? '–' : milliseconds(cpuClouds.colorsMs)}`
+          : gpuFrame && `, ${gpuFrame}`}
+        , motion {animating ? 'on' : 'off'}
       </p>
     </>
   );
