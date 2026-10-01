@@ -28,6 +28,10 @@ const CLOUD_ANIMATION_BUDGET = 50;
 // Sky and haze changes of at most this many steps (of 255) are shown straight
 // away: too small to see, so not worth the work of fading
 const INSTANT_CHANGE = 2;
+// On the CPU, the clouds are only recolored once their colors (in the cloud
+// data) have moved this many steps (of 255) from those last drawn, as each
+// recolor takes a while there
+const CPU_RECOLOR_STEP = 1;
 
 /**
  * Draws the sky, stars, clouds and haze on three canvases stacked with normal
@@ -197,7 +201,8 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
   function drawClouds(settings, data, rows, duration) {
     const { cloudWidth, cloudHeight } = sizes();
     const resized = state.cloudData?.width !== cloudWidth || state.cloudData?.height !== cloudHeight;
-    if (!resized && sameCloudData(data, state.cloudData)) return false;
+    const tolerance = state.cloudMode === 'cpu' ? CPU_RECOLOR_STEP : 0;
+    if (!resized && sameCloudData(data, state.cloudData, tolerance)) return false;
 
     if (state.cloudMode === undefined) chooseCloudRenderer(settings, data, cloudWidth, cloudHeight);
     const renderer = state.cloudRenderer;
@@ -331,21 +336,31 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
   };
 }
 
-// Whether two sets of cloud data (from cloudShaderData) would draw the same clouds
-function sameCloudData(a, b) {
+/**
+ * Whether two sets of cloud data (from cloudShaderData) would draw the same
+ * clouds, allowing their colors to differ by up to `tolerance` steps (with
+ * the layers' share of the glow boost allowed to differ by as much)
+ */
+function sameCloudData(a, b, tolerance = 0) {
   if (!a || !b) return false;
+  const layers = (data) =>
+    JSON.stringify(
+      tolerance > 0
+        ? data.layers.map((layer) => ({ ...layer, boostShare: Math.round((layer.boostShare * 255) / tolerance) }))
+        : data.layers,
+    );
   return (
-    sameValues(a.rows, b.rows) &&
-    (a.scatteringLut === b.scatteringLut || sameValues(a.scatteringLut, b.scatteringLut)) &&
+    sameValues(a.rows, b.rows, tolerance) &&
+    (a.scatteringLut === b.scatteringLut || sameValues(a.scatteringLut, b.scatteringLut, tolerance)) &&
     JSON.stringify(a.uniforms) === JSON.stringify(b.uniforms) &&
-    JSON.stringify(a.layers) === JSON.stringify(b.layers)
+    layers(a) === layers(b)
   );
 }
 
-// Whether two arrays of numbers hold the same values
-function sameValues(a, b) {
+// Whether two arrays of numbers hold the same values, to within `tolerance`
+function sameValues(a, b, tolerance = 0) {
   if (!a || !b || a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  for (let i = 0; i < a.length; i++) if (Math.abs(a[i] - b[i]) > tolerance) return false;
   return true;
 }
 

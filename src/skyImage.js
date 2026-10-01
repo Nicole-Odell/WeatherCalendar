@@ -272,12 +272,15 @@ export function colorClouds(pixels, width, height, settings, rows, shapes) {
   const glowSettings = { ...DEFAULT_CLOUD_GLOW, ...settings.cloudGlow };
   const { boost, boostContrast } = glowSettings;
   const light = [0, 0, 0];
+  const skyOnScreen = [0, 0, 0];
   for (let row = 0; row < height; row++) {
     const layer = layerAt(rowHeight(row));
     if (!layer) {
       pixels.fill(0, row * width * 4, (row + 1) * width * 4);
       continue;
     }
+    const behind = sky[row];
+    for (let channel = 0; channel < 3; channel++) skyOnScreen[channel] = toScreenValue(behind[channel], channel);
     const glowMatch = scattering ? null : glowMatchingCloud(layer.glow, cloud[row]);
     const glow = glowMatch?.glow;
     const boostColor = glowMatch ? boostedGlowColor(glow, glowSettings.boostSaturation) : null;
@@ -321,12 +324,35 @@ export function colorClouds(pixels, width, height, settings, rows, shapes) {
           colorBlend(light, boostColor, strength);
         }
       }
+      // As colorOver, with the sky's on-screen value worked out once per row
+      // and the sRGB curve from a table, since this runs for every pixel
+      const shown = alpha / 255;
       for (let channel = 0; channel < 3; channel++) {
-        pixels[offset + channel] = colorOver(sky[row][channel], light[channel], alpha, channel);
+        const mixed = behind[channel] + (light[channel] - behind[channel]) * shown;
+        const target =
+          BLACK_LEVEL[channel] + (255 - BLACK_LEVEL[channel]) * encodeSrgbFromTable(mixed);
+        pixels[offset + channel] = (target - skyOnScreen[channel] * (1 - shown)) / shown;
       }
       pixels[offset + 3] = alpha;
     }
   }
+}
+
+// encodeSrgb at SRGB_TABLE_SIZE + 1 evenly spaced values from 0 to 1, made
+// when first needed. Interpolating between them is within 0.00002 of the curve.
+const SRGB_TABLE_SIZE = 4096;
+let srgbTable = null;
+
+// encodeSrgb, from the table for values from 0 to 1
+function encodeSrgbFromTable(linear) {
+  if (!(linear >= 0 && linear <= 1)) return encodeSrgb(linear);
+  if (!srgbTable) {
+    srgbTable = new Float64Array(SRGB_TABLE_SIZE + 1);
+    for (let i = 0; i <= SRGB_TABLE_SIZE; i++) srgbTable[i] = encodeSrgb(i / SRGB_TABLE_SIZE);
+  }
+  const position = linear * SRGB_TABLE_SIZE;
+  const i = Math.min(SRGB_TABLE_SIZE - 1, Math.floor(position));
+  return srgbTable[i] + (srgbTable[i + 1] - srgbTable[i]) * (position - i);
 }
 
 // The settings cloudShapes and colorClouds share: whether lighting is by
