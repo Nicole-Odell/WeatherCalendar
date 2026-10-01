@@ -199,6 +199,8 @@ export default function App() {
   const [cloudOverride, setCloudOverride] = useState(null);
   const [cloudInputs, setCloudInputs] = useState(NO_CLOUDS);
   const [textColor, setTextColor] = useState(undefined);
+  // Whether the page's content is hidden, leaving just the sky
+  const [contentHidden, setContentHidden] = useState(false);
   // How bright clouds are compared to the sky, and what's in its inputs until applied
   const [cloudBrightness, setCloudBrightness] = useState(DEFAULT_CLOUD_BRIGHTNESS);
   const [cloudBrightnessInputs, setCloudBrightnessInputs] = useState({
@@ -421,7 +423,18 @@ export default function App() {
           onStatus={setRenderStatus}
         />
       )}
-      <main className="app" style={{ color: sky ? textColor : undefined }}>
+      <button
+        type="button"
+        className="content-toggle"
+        style={{ color: sky ? textColor : undefined }}
+        onClick={() => setContentHidden(!contentHidden)}
+      >
+        {contentHidden ? 'Show' : 'Hide'}
+      </button>
+      <main
+        className="app"
+        style={{ color: sky ? textColor : undefined, display: contentHidden ? 'none' : undefined }}
+      >
         {weather && (
           <>
             <table>

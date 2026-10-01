@@ -610,7 +610,7 @@ function scatteringCloudLighting(settings, scene, { skylight, forwardScattering:
   const rimStrength = settings.cloudGlow?.strength ?? 1;
   // The screen runs from the sky colors' lowest view elevation to their highest
   const bottomElevation = colors[0].elevation;
-  const topElevation = colors.at(-1).elevation;
+  const topElevation = colors[colors.length - 1].elevation;
 
   return (up) => {
     const altitude = Math.max(0.1, up * CLOUD_TOP_HEIGHT);
@@ -928,7 +928,7 @@ function prepareScene({
   // Where the sun is on screen (0 at the bottom, 1 at the top), placed by the
   // sky colors' view elevations. It's below 0 when the sun is low.
   const sunOnScreen =
-    (sunElevation - colors[0].elevation) / (colors.at(-1).elevation - colors[0].elevation);
+    (sunElevation - colors[0].elevation) / (colors[colors.length - 1].elevation - colors[0].elevation);
   const layers = CLOUD_LAYERS.filter((layer) => clouds[layer.name] > 0).map((layer) => {
     const bottomOnScreen = layer.bottom / CLOUD_TOP_HEIGHT;
     const topOnScreen = Math.min(layer.top, CLOUD_TOP_HEIGHT) / CLOUD_TOP_HEIGHT;

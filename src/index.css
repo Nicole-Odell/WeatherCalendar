@@ -30,6 +30,21 @@ a {
   color: inherit;
 }
 
+/* Shows or hides the page's content: just text and a soft shadow outline */
+.content-toggle {
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  z-index: 1;
+  /* The same size as the page's other buttons, which use the browser's defaults */
+  padding: 1px 6px;
+  border: 2px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+  cursor: pointer;
+}
+
 /* Cloud cover: sliders stacked, labels and values lined up, buttons centered below */
 .cloud-cover {
   text-align: center;

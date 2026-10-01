@@ -293,9 +293,11 @@ export function createCloudRenderer(canvas) {
     gl.uniform1i(program.uniform(name), unit);
   }
 
-  function drawBlend(progress, target) {
+  // Draws `from` and `to` blended into `target` (the canvas if null).
+  // `fromFrame` replaces `from`, so a frame can be copied into `from`.
+  function drawBlend(progress, target, fromFrame = frames.from) {
     const { uniform } = blendProgram;
-    bindTexture(0, frames.from.texture, blendProgram, 'from');
+    bindTexture(0, fromFrame.texture, blendProgram, 'from');
     bindTexture(1, frames.to.texture, blendProgram, 'to');
     gl.uniform1f(uniform('progress'), progress);
     gl.uniform2f(uniform('size'), width, height);
@@ -369,7 +371,9 @@ export function createCloudRenderer(canvas) {
       }
       drawClouds(time, settings, frames.to);
       if (!hasFrame) {
-        drawBlend(1, frames.from);
+        // The first frame is copied into `from` (reading only `to`, since a
+        // texture can't be read while it's being drawn into)
+        drawBlend(1, frames.from, frames.to);
         hasFrame = true;
       }
       fade = { start: performance.now(), duration };
