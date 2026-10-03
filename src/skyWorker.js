@@ -8,7 +8,7 @@ import { createSkyRenderer } from './skyRenderer.js';
  *   over with transferControlToOffscreen, and createSkyRenderer's option
  * - { type: 'scene', props } and { type: 'cloudSpeed', speed }: as for
  *   createSkyRenderer's setScene and setCloudSpeed
- * It posts back the renderer's reports ({ textColor } and { status }).
+ * It posts back the renderer's reports ({ status }).
  */
 let renderer = null;
 

@@ -20,16 +20,6 @@ export function withScreenBrightness(rgb, brightness) {
   return rgb.map((linear) => decodeSrgb(brightness * encodeSrgb(linear)));
 }
 
-/**
- * Returns black or white, whichever is easier to read over a background color
- * given in linear-light sRGB. Below a luminance of about 0.18, white text has
- * more contrast than black.
- */
-export function readableTextColor([red, green, blue]) {
-  const luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
-  return luminance > 0.179 ? 'black' : 'white';
-}
-
 // Applies the sRGB curve that screens expect, to a linear-light value (0–1)
 export function encodeSrgb(linear) {
   return linear <= 0.0031308 ? 12.92 * linear : 1.055 * linear ** (1 / 2.4) - 0.055;

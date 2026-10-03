@@ -152,7 +152,7 @@ export const DEFAULT_CLOUD_GLOW = {
  * it reaches, in moon radii (see moonGlow). `terminatorSoftness` is how wide
  * the blurred line between the lit and dark parts is, in moon radii.
  */
-export const DEFAULT_MOON = { luminance: 10000, contrast: 3, glow: 0.5, glowWidth: 0.1, terminatorSoftness: 0.15 };
+export const DEFAULT_MOON = { luminance: 10000, contrast: 3, glow: 0.5, glowWidth: 0.1, terminatorSoftness: 0.25 };
 // The glow falls off as a power of (1 + distance / scale), with the scale
 // this share of its reach: steep near the moon, then gentle
 // The moon's colors are worked out for bands of this many rows, which the
@@ -439,26 +439,6 @@ export function cloudBands({ rowHeight, layerAt }, height) {
  */
 export function computeRows(settings, height) {
   return rowColors(settings, height);
-}
-
-/**
- * The scene's approximate average color (linear light), from `rows` (see
- * computeRows): the sky, covered in each cloud band by that layer's share of
- * cloud cover, then the haze over it. It's close enough to choose a readable
- * text color without drawing the clouds.
- */
-export function sceneAverageColor({ scene, sky, cloud, haze, rowHeight, layerAt }) {
-  const total = [0, 0, 0];
-  sky.forEach((rgb, row) => {
-    const layer = layerAt(rowHeight(row));
-    const coverage = layer ? layer.cover * scene.cloudMaxOpacity : 0;
-    for (let channel = 0; channel < 3; channel++) {
-      let value = rgb[channel] + (cloud[row][channel] - rgb[channel]) * coverage;
-      value += (haze[row] - value) * scene.hazeOpacity;
-      total[channel] += value;
-    }
-  });
-  return total.map((value) => value / sky.length);
 }
 
 /*

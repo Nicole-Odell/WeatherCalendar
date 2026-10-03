@@ -1,5 +1,4 @@
 import { createCloudRenderer } from './cloudsGL.js';
-import { readableTextColor } from './color.js';
 import { createCpuCloudRenderer } from './cpuClouds.js';
 import moonUrl from '../assets/images/moon.png';
 import {
@@ -11,7 +10,6 @@ import {
   renderMoon,
   renderSkyColumn,
   renderStarGlow,
-  sceneAverageColor,
   starColors,
   starsKey,
 } from './skyImage.js';
@@ -57,8 +55,7 @@ const CPU_RECOLOR_STEP = 1;
  *    otherwise on the CPU (see cpuClouds.js)
  * 3. `haze`: the haze, a column 1 pixel wide that the page stretches
  * `createCanvas()` makes an off-screen canvas for drawing the sky and stars
- * into. `report(message)` passes back { textColor } (the text color that's
- * easiest to read over the scene) and { status } (renderer and timings).
+ * into. `report(message)` passes back { status } (renderer and timings).
  * `forceCpuClouds` draws the clouds on the CPU even if WebGL is fast enough.
  *
  * Each redraw fades in from what's showing. Only pixels that differ between
@@ -392,9 +389,6 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
     const cloudsRedrawn = drawClouds(settings, cloudShaderData(settings, cloudHeight, rows), rows, fadeDuration);
     updateAnimation();
     startPainting();
-    const cloudsDone = performance.now();
-
-    report({ textColor: readableTextColor(sceneAverageColor(rows)) });
     const done = performance.now();
 
     report({
@@ -411,9 +405,8 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
           starsRedrawn,
           moonMs: moonDone - starsDone,
           moonRedrawn,
-          cloudsMs: cloudsDone - moonDone,
+          cloudsMs: done - moonDone,
           cloudsRedrawn,
-          averageMs: done - cloudsDone,
         },
       },
     });

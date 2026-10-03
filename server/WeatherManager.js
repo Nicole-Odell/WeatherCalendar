@@ -29,8 +29,9 @@ const CURRENT_FIELDS = [
   'wind_gusts_10m',
 ];
 
-// Haze, from Open-Meteo's air quality API
-const AIR_QUALITY_FIELDS = ['aerosol_optical_depth'];
+// Haze and the US Air Quality Index, from Open-Meteo's air quality API. (Its
+// pollen data only covers Europe.)
+const AIR_QUALITY_FIELDS = ['aerosol_optical_depth', 'us_aqi'];
 
 // The moon's phase from Open-Meteo, as a fraction of its cycle (0 new, 0.25
 // first quarter, 0.5 full, 0.75 last quarter). Its daily value is the phase
@@ -51,7 +52,9 @@ const SYNODIC_MONTH_DAYS = 29.530589;
 export async function GetCurrentWeatherData(forceRefresh = false) {
   const cached = await readCache(CACHE_NAME);
   const maxAge = forceRefresh ? MIN_REFRESH_INTERVAL_MS : CACHE_DURATION_MS;
-  if (cached?.moonPhases && Date.now() - Date.parse(cached.fetchedAt) < maxAge) {
+  const complete =
+    cached?.moonPhases && [...CURRENT_FIELDS, ...AIR_QUALITY_FIELDS].every((field) => field in cached.current);
+  if (complete && Date.now() - Date.parse(cached.fetchedAt) < maxAge) {
     return cached;
   }
 

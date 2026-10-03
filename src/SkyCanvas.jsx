@@ -7,14 +7,13 @@ import SkyWorker from './skyWorker.js?worker';
  * The sky, stars, clouds and haze, drawn behind the page (see skyRenderer.js).
  * Drawing happens on a worker thread where the browser can hand canvases to
  * one (OffscreenCanvas), so it never holds up taps or page updates; otherwise
- * on the page itself. Reports the text color that's easiest to read over the
- * scene through onTextColor, and how drawing is going through onStatus.
+ * on the page itself. Reports how drawing is going through onStatus.
  */
-export default function SkyCanvas({ onTextColor, onStatus, cloudSpeed, fadeDuration, ...settings }) {
+export default function SkyCanvas({ onStatus, cloudSpeed, fadeDuration, ...settings }) {
   const containerRef = useRef(null);
   const renderer = useRef(null);
   const callbacks = useRef(null);
-  callbacks.current = { onTextColor, onStatus };
+  callbacks.current = { onStatus };
   const [windowSize, setWindowSize] = useState(currentWindowSize);
 
   useEffect(() => {
@@ -33,8 +32,7 @@ export default function SkyCanvas({ onTextColor, onStatus, cloudSpeed, fadeDurat
       canvases[name].className = 'sky-background';
       container.appendChild(canvases[name]);
     }
-    const report = ({ textColor, status }) => {
-      if (textColor) callbacks.current.onTextColor(textColor);
+    const report = ({ status }) => {
       if (status) callbacks.current.onStatus?.(status);
     };
     renderer.current = startRenderer(canvases, report);

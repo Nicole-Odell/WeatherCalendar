@@ -9,6 +9,7 @@ import {
   DEFAULT_MOON,
 } from './skyImage.js';
 import { toImperial } from './units.js';
+import weatherCodes from './weatherCodes.json';
 
 const luminanceFormat = new Intl.NumberFormat(undefined, { maximumSignificantDigits: 3 });
 
@@ -215,8 +216,7 @@ function RenderStatus() {
         {fullUpdate.starsRedrawn ? ', redrawn' : ', unchanged'}, moon {milliseconds(fullUpdate.moonMs)}
         {fullUpdate.moonRedrawn ? ', redrawn' : ', unchanged'}, clouds{' '}
         {milliseconds(fullUpdate.cloudsMs)}
-        {fullUpdate.cloudsRedrawn ? ', redrawn' : ', unchanged'}, text color{' '}
-        {milliseconds(fullUpdate.averageMs)})
+        {fullUpdate.cloudsRedrawn ? ', redrawn' : ', unchanged'})
       </p>
       <p>
         Clouds: {cloudRenderer}
@@ -281,6 +281,87 @@ function SkyColorTable() {
     </table>
   );
 }
+
+// Each weather code's name and icons (Meteocons, full color), from
+// weatherCodes.json. Codes not listed there show UNKNOWN_ICON.
+const WEATHER_CODES = new Map(weatherCodes.map((entry) => [entry.code, entry]));
+const UNKNOWN_ICON = 'not-available';
+// Meteocons icons, without animation (see scripts/importMeteocons.mjs): the
+// weather codes' in full color, and every other icon in white
+const weatherIconUrl = (name) => `/icons/meteocons/fill/${name}.svg`;
+const whiteIconUrl = (name) => `/icons/meteocons/white/${name}.svg`;
+// Shown in place of a value that isn't available
+const MISSING = '-';
+
+// A temperature from the weather as whole °F, or MISSING
+function wholeFahrenheit(weather, field) {
+  const value = weather?.current[field];
+  if (typeof value !== 'number') return MISSING;
+  return String(Math.round(toImperial(value, weather.units[field]).value));
+}
+
+// The date and time, updated as each minute starts
+function DateAndTime({ children }) {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    let timer;
+    const tick = () => {
+      setNow(new Date());
+      timer = setTimeout(tick, 60000 - (Date.now() % 60000) + 50);
+    };
+    timer = setTimeout(tick, 60000 - (Date.now() % 60000) + 50);
+    return () => clearTimeout(timer);
+  }, []);
+  const date = now.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
+  const time = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }).toLowerCase();
+  return children({ date, time });
+}
+
+// A value with a white icon after it, as in the bottom row of the display
+function ValueWithIcon({ value, icon, label }) {
+  return (
+    <span className="weather-detail" title={label}>
+      {value}
+      <img className="detail-icon" src={whiteIconUrl(icon)} alt={label} />
+    </span>
+  );
+}
+
+// The main display: the date, time and current weather
+const WeatherDisplay = memo(function WeatherDisplay({ weather }) {
+  const current = weather?.current;
+  const code = current ? WEATHER_CODES.get(current.weather_code) : undefined;
+  const night = current?.is_day === 0;
+  const icon = (night && code?.nightIcon) || code?.icon || UNKNOWN_ICON;
+  const condition = code?.name ?? (current ? `Weather code ${current.weather_code}` : MISSING);
+  const aqi = typeof current?.us_aqi === 'number' ? String(Math.round(current.us_aqi)) : MISSING;
+  return (
+    <section className="weather-display">
+      <DateAndTime>
+        {({ date, time }) => (
+          <>
+            <div className="weather-date">{date}</div>
+            <div className="weather-now">
+              <img className="weather-icon" src={weatherIconUrl(icon)} alt="" />
+              <div>
+                <div className="weather-time">{time}</div>
+                <div className="weather-condition">{condition}</div>
+              </div>
+            </div>
+          </>
+        )}
+      </DateAndTime>
+      <div className="weather-details">
+        <span className="weather-detail" title="Feels like (actual temperature)">
+          {wholeFahrenheit(weather, 'apparent_temperature')}° ({wholeFahrenheit(weather, 'temperature_2m')})
+        </span>
+        <ValueWithIcon value={aqi} icon="smoke" label="US Air Quality Index" />
+        {/* Pollen: not available from the APIs in use for this location yet */}
+        <ValueWithIcon value={MISSING} icon="pollen-flower" label="Pollen" />
+      </div>
+    </section>
+  );
+});
 
 const WeatherTable = memo(function WeatherTable({ weather }) {
   return (
@@ -377,9 +458,8 @@ export default function App() {
   // what the sliders show until applied
   const [cloudOverride, setCloudOverride] = useState(null);
   const [cloudInputs, setCloudInputs] = useState(NO_CLOUDS);
-  const [textColor, setTextColor] = useState(undefined);
-  // Whether the page's content is hidden, leaving just the sky
-  const [contentHidden, setContentHidden] = useState(false);
+  // Whether the settings are showing, in place of the weather display
+  const [settingsOpen, setSettingsOpen] = useState(false);
   // How bright clouds are compared to the sky, and what's in its inputs until applied
   const [cloudBrightness, setCloudBrightness] = useState(DEFAULT_CLOUD_BRIGHTNESS);
   const [cloudBrightnessInputs, setCloudBrightnessInputs] = useState({
@@ -612,20 +692,16 @@ export default function App() {
         hazeContrast={hazeContrast}
         moon={moon}
         cloudSpeed={cloudSpeed}
-        onTextColor={setTextColor}
       />
       <button
         type="button"
         className="content-toggle"
-        style={{ color: textColor }}
-        onClick={() => setContentHidden(!contentHidden)}
+        onClick={() => setSettingsOpen(!settingsOpen)}
       >
-        {contentHidden ? 'Show' : 'Hide'}
+        {settingsOpen ? 'Back' : 'Settings'}
       </button>
-      <main
-        className="app"
-        style={{ color: textColor, display: contentHidden ? 'none' : undefined }}
-      >
+      {!settingsOpen && <WeatherDisplay weather={weather} />}
+      <main className="app" style={{ display: settingsOpen ? undefined : 'none' }}>
         {weather && <WeatherTable weather={weather} />}
         {weatherError && <p>Weather error: {weatherError}</p>}
         {sunTimes && <SunTimesTable sunTimes={sunTimes} />}
