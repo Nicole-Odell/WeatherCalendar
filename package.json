@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "concurrently -n server,client \"node --watch server/index.js\" \"vite\"",
     "build": "vite build",
-    "start": "node server/index.js"
+    "start": "node server/index.js",
+    "reload-display": "ssh pi@192.168.4.45 ~/reload-display.sh",
+    "deploy": "vite build && npm run reload-display"
   },
   "dependencies": {
     "express": "^5.2.1",
