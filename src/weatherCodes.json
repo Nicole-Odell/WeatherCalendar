@@ -26,5 +26,6 @@
   { "code": 86, "name": "Snow Showers", "icon": "overcast-snow" },
   { "code": 95, "name": "Thunderstorm", "icon": "thunderstorms-day-rain", "nightIcon": "thunderstorms-night-rain" },
   { "code": 96, "name": "Thunderstorm with Hail", "icon": "thunderstorms-hail" },
+  { "code": 97, "name": "Heavy Thunderstorm", "icon": "thunderstorms-extreme-day-rain", "nightIcon": "thunderstorms-extreme-night-rain" },
   { "code": 99, "name": "Thunderstorm with Heavy Hail", "icon": "thunderstorms-extreme-hail" }
 ]
