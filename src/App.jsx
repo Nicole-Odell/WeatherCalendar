@@ -244,6 +244,121 @@ function CloudMotionNote() {
 }
 
 // The sky colors by elevation, built only while open
+// Weather code icons not yet copied into the project preview from Meteocons'
+// static icons (the same source scripts/importMeteocons.mjs copies from)
+const METEOCONS_PREVIEW = 'https://cdn.meteocons.com/3.0.0-next.10/svg-static/fill';
+const IMPORTED_ICONS = new Set(weatherCodes.flatMap(({ icon, nightIcon }) => [icon, nightIcon]).filter(Boolean));
+
+// weatherCodes.json's entries as the file lays them out: one per line
+function weatherCodesJson(entries) {
+  const lines = entries.map((entry) => {
+    const fields = ['code', 'name', 'icon', 'nightIcon'].filter((key) => entry[key] !== undefined && entry[key] !== '');
+    return `  { ${fields.map((key) => `${JSON.stringify(key)}: ${JSON.stringify(entry[key])}`).join(', ')} }`;
+  });
+  return `[\n${lines.join(',\n')}\n]\n`;
+}
+
+// An icon named in the weather codes editor, or a note if there's none or
+// it can't be found
+function WeatherCodeIcon({ name }) {
+  const [missing, setMissing] = useState(false);
+  useEffect(() => setMissing(false), [name]);
+  if (!name) return <span className="code-icon-note">none</span>;
+  if (missing) return <span className="code-icon-note">not found</span>;
+  const src = IMPORTED_ICONS.has(name) ? weatherIconUrl(name) : `${METEOCONS_PREVIEW}/${name}.svg`;
+  return <img className="code-icon" src={src} alt={name} onError={() => setMissing(true)} />;
+}
+
+// Every weather code with its display name and icons, built only while open
+function WeatherCodesSection() {
+  const [open, setOpen] = useState(false);
+  return (
+    <details className="advanced" onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <summary>Weather Codes</summary>
+      {open && <WeatherCodesEditor />}
+    </details>
+  );
+}
+
+/**
+ * Shows each weather code's name and icons from weatherCodes.json, and lets
+ * them be changed here, previewing the icons straight away. The changed file
+ * is shown below the table, to copy into src/weatherCodes.json.
+ */
+function WeatherCodesEditor() {
+  const [entries, setEntries] = useState(() => weatherCodes.map((entry) => ({ ...entry })));
+  const json = weatherCodesJson(entries);
+  const changed = json !== weatherCodesJson(weatherCodes);
+  const update = (index, key, value) =>
+    setEntries(entries.map((entry, i) => (i === index ? { ...entry, [key]: value.trim() === '' && key !== 'name' ? '' : value } : entry)));
+  return (
+    <>
+      <p>
+        Icons are{' '}
+        <a href="https://meteocons.com/icons?style=fill" target="_blank" rel="noreferrer">
+          Meteocons
+        </a>
+        , named as on that site. Codes not listed here show the not-available icon. The night icon is
+        used after dark if there is one.
+      </p>
+      <table className="weather-codes">
+        <thead>
+          <tr>
+            <th>code</th>
+            <th>name</th>
+            <th>day icon</th>
+            <th>night icon</th>
+          </tr>
+        </thead>
+        <tbody>
+          {entries.map((entry, index) => (
+            <tr key={entry.code}>
+              <td>{entry.code}</td>
+              <td>
+                <input
+                  type="text"
+                  value={entry.name}
+                  onChange={(event) => update(index, 'name', event.target.value)}
+                />
+              </td>
+              {['icon', 'nightIcon'].map((key) => (
+                <td key={key}>
+                  <div className="code-icon-cell">
+                    <WeatherCodeIcon name={entry[key]} />
+                    <input
+                      type="text"
+                      value={entry[key] || ''}
+                      placeholder={key === 'nightIcon' ? 'same as day' : ''}
+                      onChange={(event) => update(index, key, event.target.value)}
+                    />
+                  </div>
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p>
+        {changed
+          ? 'To use these changes, copy this into src/weatherCodes.json, then run node scripts/importMeteocons.mjs and npm run build (or ask Claude to).'
+          : 'No changes yet. This is the current src/weatherCodes.json.'}
+      </p>
+      <textarea
+        className="weather-codes-json"
+        readOnly
+        value={json}
+        rows={Math.min(entries.length + 2, 34)}
+        onFocus={(event) => event.target.select()}
+      />
+      <p>
+        <button type="button" onClick={() => setEntries(weatherCodes.map((entry) => ({ ...entry })))} disabled={!changed}>
+          Undo changes
+        </button>
+      </p>
+    </>
+  );
+}
+
 function SkyColorDetails() {
   const [open, setOpen] = useState(false);
   return (
@@ -1010,6 +1125,8 @@ export default function App() {
 
           <SkyColorDetails />
         </details>
+
+        <WeatherCodesSection />
 
         <p>
           <button type="button" onClick={refresh} disabled={loading}>

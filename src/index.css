@@ -188,3 +188,40 @@ a {
   margin-left: 0.1em;
   filter: var(--icon-shadow);
 }
+
+/* The weather codes editor in Settings */
+.weather-codes td {
+  vertical-align: middle;
+  padding: 2px 16px 2px 0;
+}
+
+.code-icon-cell {
+  display: flex;
+  align-items: center;
+}
+
+.code-icon-cell input {
+  margin-left: 8px;
+  width: 15em;
+}
+
+.code-icon {
+  width: 56px;
+  height: 56px;
+  filter: var(--icon-shadow);
+}
+
+.code-icon-note {
+  display: inline-block;
+  width: 56px;
+  font-size: 12px;
+  text-align: center;
+  opacity: 0.8;
+}
+
+.weather-codes-json {
+  width: 100%;
+  box-sizing: border-box;
+  font: 13px/1.4 ui-monospace, monospace;
+}
+
