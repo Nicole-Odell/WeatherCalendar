@@ -20,11 +20,19 @@ const output = path.join(root, 'public', 'icons', 'meteocons');
 
 // The icon shown for weather codes that aren't in weatherCodes.json
 const UNKNOWN_ICON = 'not-available';
-// One-color icons used by the display (see the icons in src/App.jsx)
-const WHITE_ICONS = ['smoke', 'pollen-flower'];
+// Other icons used by the display (see the icons in src/App.jsx): in full
+// color, and one-color (drawn white, and recolored on the page as needed)
+const OTHER_FILL_ICONS = [
+  ...Array.from({ length: 11 }, (_, i) => `uv-index-${i + 1}`),
+  'uv-index-11-plus',
+  ...['grass', 'tree', 'weed'].flatMap((type) =>
+    ['low', 'moderate', 'high', 'very-high'].map((level) => `pollen-${type}-${level}`),
+  ),
+];
+const WHITE_ICONS = ['smoke-particles', 'fahrenheit', 'starry-night'];
 
 const weatherCodes = JSON.parse(await fs.readFile(path.join(root, 'src', 'weatherCodes.json'), 'utf8'));
-const fillIcons = new Set([UNKNOWN_ICON]);
+const fillIcons = new Set([UNKNOWN_ICON, ...OTHER_FILL_ICONS]);
 for (const { icon, nightIcon } of weatherCodes) {
   if (icon) fillIcons.add(icon);
   if (nightIcon) fillIcons.add(nightIcon);

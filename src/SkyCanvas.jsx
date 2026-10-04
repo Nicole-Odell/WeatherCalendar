@@ -7,9 +7,10 @@ import SkyWorker from './skyWorker.js?worker';
  * The sky, stars, clouds and haze, drawn behind the page (see skyRenderer.js).
  * Drawing happens on a worker thread where the browser can hand canvases to
  * one (OffscreenCanvas), so it never holds up taps or page updates; otherwise
- * on the page itself. Reports how drawing is going through onStatus.
+ * on the page itself. Reports how drawing is going through onStatus. While
+ * `paused`, the clouds stop moving (new scenes are still drawn).
  */
-export default function SkyCanvas({ onStatus, cloudSpeed, fadeDuration, ...settings }) {
+export default function SkyCanvas({ onStatus, cloudSpeed, paused, fadeDuration, ...settings }) {
   const containerRef = useRef(null);
   const renderer = useRef(null);
   const callbacks = useRef(null);
@@ -95,13 +96,18 @@ export default function SkyCanvas({ onStatus, cloudSpeed, fadeDuration, ...setti
     renderer.current.setCloudSpeed(cloudSpeed ?? 1);
   }, [cloudSpeed]);
 
+  // Bedtime: cloud motion pauses while the screen is off
+  useEffect(() => {
+    renderer.current.setPaused(Boolean(paused));
+  }, [paused]);
+
   return <div ref={containerRef} />;
 }
 
 /**
  * Starts drawing on `canvases`: on a worker thread if the browser can hand
  * canvases to one, otherwise on the page. Returns { setScene, setCloudSpeed,
- * dispose }; `report` gets the renderer's reports, with each status saying
+ * setPaused, dispose }; `report` gets the renderer's reports, with each status saying
  * which thread it's drawing on.
  */
 function startRenderer(canvases, report) {
@@ -122,6 +128,7 @@ function startRenderer(canvases, report) {
       return {
         setScene: (props) => worker.postMessage({ type: 'scene', props }),
         setCloudSpeed: (speed) => worker.postMessage({ type: 'cloudSpeed', speed }),
+        setPaused: (paused) => worker.postMessage({ type: 'paused', paused }),
         dispose: () => worker.terminate(),
       };
     } catch (error) {

@@ -16,6 +16,12 @@ const SLICE_ROWS = 4;
 const INSTANT_CHANGE = 2;
 // Shape work time (ms) assumed before any has been timed
 const FIRST_SHAPES_MS = 1000;
+// The columns off the left of the screen are rounded up to a multiple of
+// this, so frames keep the same size and their canvases and arrays can be
+// reused (see the pools below)
+const MARGIN_STEP = 16;
+// Most canvases and arrays of each size kept for reuse
+const POOL_SIZE = 4;
 
 /**
  * Draws the cloud layers on the CPU, with motion, into `canvas` (2D). Each
@@ -53,36 +59,73 @@ export function createCpuCloudRenderer(canvas, createCanvas, cloudSpeed) {
     colorsMs: null,
   };
 
+  /*
+   * Canvases and arrays from frames that are done with, kept for new frames.
+   * New ones are made several times a minute; on a small device like the Pi 3
+   * the memory of discarded ones isn't always freed promptly, so reusing them
+   * keeps memory steady.
+   */
+  const canvasPool = [];
+  const arrayPools = new Map();
+
+  function takeArray(Type, length) {
+    const pool = arrayPools.get(Type)?.get(length);
+    return pool?.length ? pool.pop() : new Type(length);
+  }
+
+  function returnArray(array) {
+    if (!array) return;
+    if (!arrayPools.has(array.constructor)) arrayPools.set(array.constructor, new Map());
+    const pools = arrayPools.get(array.constructor);
+    if (!pools.has(array.length)) pools.set(array.length, []);
+    const pool = pools.get(array.length);
+    if (pool.length < POOL_SIZE) pool.push(array);
+  }
+
   // A frame: an image `width` × `height` of the clouds at cloud time `clock`,
   // with its first `margin` columns off the left of the screen. `shapes` (if it
   // has them) can be recolored; a frame made from a blend of others has none.
   function createFrame(width, height, margin, clock, bands, shapes) {
-    const frameCanvas = createCanvas();
-    frameCanvas.width = width;
-    frameCanvas.height = height;
+    const frameCanvas = canvasPool.pop() ?? createCanvas();
+    if (frameCanvas.width !== width || frameCanvas.height !== height) {
+      frameCanvas.width = width;
+      frameCanvas.height = height;
+    }
     return { canvas: frameCanvas, width, height, margin, clock, bands, shapes, pixels: null };
+  }
+
+  // Puts a frame that's no longer shown back in the pools
+  function retire(frame) {
+    if (!frame) return;
+    if (canvasPool.length < POOL_SIZE) canvasPool.push(frame.canvas);
+    if (frame.shapes) Object.values(frame.shapes).forEach(returnArray);
+    returnArray(frame.pixels);
   }
 
   // Colors `frame`'s shapes for the current scene, returning the new pixels
   function colorPixels(frame) {
     const started = performance.now();
-    const pixels = new Uint8ClampedArray(frame.width * frame.height * 4);
+    const pixels = takeArray(Uint8ClampedArray, frame.width * frame.height * 4);
     colorClouds(pixels, frame.width, frame.height, state.settings, state.rows, frame.shapes);
     state.colorsMs = performance.now() - started;
     return pixels;
   }
 
+  // Shows `pixels` in `frame`, returning the frame's old pixels to the pool
   function showPixels(frame, pixels) {
+    if (frame.pixels !== pixels) returnArray(frame.pixels);
     frame.pixels = pixels;
     frame.canvas.getContext('2d').putImageData(new ImageData(pixels, frame.width, frame.height), 0, 0);
   }
 
   // Draws `frame` into `context` at the current cloud clock: each band of rows
   // slid right by how far its layer has drifted since the frame's clock, and
-  // the whole frame `xOffset` columns further right
+  // the whole frame `xOffset` columns further right. A band never slides
+  // further than the frame's extra columns: if new shapes are late (the CPU is
+  // too busy), its clouds wait at the end rather than leaving an empty edge.
   function drawFrame(context, frame, xOffset) {
     for (const band of frame.bands) {
-      const drift = (state.clock - frame.clock) * band.speed * frame.height;
+      const drift = Math.min(frame.margin, (state.clock - frame.clock) * band.speed * frame.height);
       const rows = band.end - band.start;
       context.drawImage(
         frame.canvas,
@@ -137,7 +180,15 @@ export function createCpuCloudRenderer(canvas, createCanvas, cloudSpeed) {
   // Starts fading in `frame` over `duration` ms, from what's shown now
   function fadeTo(frame, duration) {
     if (state.to) {
-      state.from = fadeProgress(performance.now()) < 1 ? snapshot() : state.to;
+      if (fadeProgress(performance.now()) < 1) {
+        const shown = snapshot();
+        retire(state.from);
+        retire(state.to);
+        state.from = shown;
+      } else {
+        retire(state.from);
+        state.from = state.to;
+      }
     }
     state.to = frame;
     state.fade = { start: performance.now(), duration: Math.max(1, duration) };
@@ -158,14 +209,16 @@ export function createCpuCloudRenderer(canvas, createCanvas, cloudSpeed) {
     const fastest = Math.max(0, ...bands.map((band) => band.speed));
     const nextShapesSeconds = ((state.shapesMs ?? FIRST_SHAPES_MS) + SHAPE_FADE) / 1000;
     const lifetime = SHAPE_REFRESH + nextShapesSeconds * cloudSpeed();
-    const margin = Math.ceil(fastest * height * lifetime * 1.25) + 4;
+    const margin = Math.ceil((fastest * height * lifetime * 1.25 + 4) / MARGIN_STEP) * MARGIN_STEP;
     const frame = createFrame(width + margin, height, margin, clock, bands, null);
     const shapes = {
-      opacity: new Float32Array(frame.width * height),
-      thinness: new Float32Array(frame.width * height),
-      depth: new Float32Array(frame.width * height),
+      opacity: takeArray(Float32Array, frame.width * height),
+      thinness: takeArray(Float32Array, frame.width * height),
+      depth: takeArray(Float32Array, frame.width * height),
     };
-    const job = { frame, nextRow: 0, started: performance.now() };
+    // A job still under way is replaced, so what it was filling in is reused
+    if (state.job) retire({ ...state.job.frame, shapes: state.job.shapes });
+    const job = { frame, shapes, nextRow: 0, started: performance.now() };
     state.job = job;
 
     const work = () => {
@@ -213,7 +266,8 @@ export function createCpuCloudRenderer(canvas, createCanvas, cloudSpeed) {
     // that's under way is cut short to this one.
     const shown = snapshot();
     const to = state.to;
-    showPixels(to, colored[frames.indexOf(to)]);
+    frames.forEach((frame, i) => (frame === to ? showPixels(to, colored[i]) : returnArray(colored[i])));
+    retire(state.from);
     state.from = shown;
     state.fade = { start: performance.now(), duration: Math.max(1, duration) };
   }
@@ -236,6 +290,8 @@ export function createCpuCloudRenderer(canvas, createCanvas, cloudSpeed) {
         state.height = height;
         canvas.width = width;
         canvas.height = height;
+        retire(state.from);
+        retire(state.to);
         state.from = null;
         state.to = null;
       }
@@ -265,7 +321,10 @@ export function createCpuCloudRenderer(canvas, createCanvas, cloudSpeed) {
       if (!state.to) return false;
       const progress = fadeProgress(now);
       drawBlend(canvas, progress);
-      if (progress >= 1) state.from = null;
+      if (progress >= 1 && state.from) {
+        retire(state.from);
+        state.from = null;
+      }
       return progress < 1;
     },
 

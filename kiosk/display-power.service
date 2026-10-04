@@ -1,0 +1,16 @@
+# Runs display-power.py on the kiosk Pi, from boot. To install (as user pi):
+#   cp display-power.py ~/display-power.py
+#   sudo cp display-power.service /etc/systemd/system/
+#   sudo systemctl enable --now display-power
+[Unit]
+Description=Weather display screen power (bedtime mode)
+After=network.target
+
+[Service]
+User=pi
+ExecStart=/usr/bin/python3 /home/pi/display-power.py
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

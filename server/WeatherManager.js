@@ -27,6 +27,7 @@ const CURRENT_FIELDS = [
   'wind_speed_10m',
   'wind_direction_10m',
   'wind_gusts_10m',
+  'uv_index',
 ];
 
 // Haze and the US Air Quality Index, from Open-Meteo's air quality API. (Its

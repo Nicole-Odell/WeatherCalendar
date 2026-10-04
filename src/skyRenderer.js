@@ -80,11 +80,29 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
     sky: createLayer(createCanvas()),
     haze: createLayer(canvases.haze),
     // The stars shown, their colors, glow and key (to tell when they change)
-    stars: { canvas: createCanvas(), colors: null, glow: null, key: undefined, changed: false },
+    // (the glow is drawn on its own canvas, kept to be reused)
+    stars: {
+      canvas: createCanvas(),
+      glowCanvas: createCanvas(),
+      colors: null,
+      glow: null,
+      key: undefined,
+      changed: false,
+    },
     // The moon picture once loaded, its pixels at the size drawn, the moon as
     // drawn, where it goes (top left, in screen pixels) and its key (to tell
     // when it changes)
-    moon: { picture: null, image: null, canvas: createCanvas(), left: 0, top: 0, key: null, changed: false },
+    moon: {
+      picture: null,
+      image: null,
+      pixels: null,
+      canvas: createCanvas(),
+      left: 0,
+      top: 0,
+      key: null,
+      sky: null,
+      changed: false,
+    },
     // How the clouds are drawn, once chosen: 'webgl' or 'cpu', with the
     // renderer (from cloudsGL.js or cpuClouds.js) and how long the GPU took
     // to draw a cloud frame (null without WebGL)
@@ -98,6 +116,9 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
     cloudClock: Date.now() / 1000,
     cloudClockUpdated: Date.now() / 1000,
     cloudSpeed: 1,
+    // While paused (bedtime), the clouds stop moving and their clock stops,
+    // so they carry on from where they were
+    paused: false,
     animating: false,
     animationTimer: 0,
     animationFrame: 0,
@@ -150,7 +171,7 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
   // changes how fast they move on from where they are, without a jump.
   function cloudTime() {
     const now = Date.now() / 1000;
-    if (state.animating) state.cloudClock += (now - state.cloudClockUpdated) * state.cloudSpeed;
+    if (state.animating && !state.paused) state.cloudClock += (now - state.cloudClockUpdated) * state.cloudSpeed;
     state.cloudClockUpdated = now;
     return state.cloudClock;
   }
@@ -166,10 +187,10 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
   }
 
   // Starts or stops cloud motion, which runs while there are cloud layers to
-  // move (and, with WebGL, while the GPU is fast enough)
+  // move and it isn't paused (and, with WebGL, while the GPU is fast enough)
   function updateAnimation() {
     const { low, mid, high } = state.props.settings.clouds;
-    const run = state.animating && (low > 0 || mid > 0 || high > 0);
+    const run = state.animating && !state.paused && (low > 0 || mid > 0 || high > 0);
     if (run && !state.animationTimer) {
       state.animationTimer = setInterval(() => drawCloudFrame(CLOUD_INTERVAL), CLOUD_INTERVAL);
     } else if (!run && state.animationTimer) {
@@ -264,7 +285,7 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
 
     const { width, height } = state.props.windowSize;
     const colors = starColors(settings);
-    const glow = createCanvas();
+    const glow = stars.glowCanvas;
     resize(glow, STAR_GLOW_WIDTH, Math.max(1, Math.round((STAR_GLOW_WIDTH * height) / width)));
     const glowContext = glow.getContext('2d');
     const glowImage = glowContext.createImageData(glow.width, glow.height);
@@ -308,10 +329,14 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
     }
     // Where it's drawn for: where it was last drawn, if it's only moved a little
     const drawTop = moon.key !== null && Math.abs(top - moon.drawnTop) < MOON_REDRAW_MOVE ? moon.drawnTop : top;
-    // The sky rows behind the moon, which are all of the sky it depends on.
-    // The phase moves on very slowly, so it's only redrawn for steps of 0.0001.
+    // The sky rows behind the moon, which are all of the sky it depends on. As
+    // the sun moves they change by a step most seconds, so the moon is only
+    // redrawn once they've changed by more than INSTANT_CHANGE steps since it
+    // was last drawn. The phase moves on very slowly, so it's only redrawn for
+    // steps of 0.0001.
     const firstRow = Math.max(0, Math.floor((drawTop / fullHeight) * cloudHeight));
     const lastRow = Math.min(cloudHeight, Math.ceil(((drawTop + size) / fullHeight) * cloudHeight) + 1);
+    const sky = skyColumn.slice(firstRow * 4, lastRow * 4);
     const { altitude: _, phase, ...moonSettings } = settings.moon;
     const key = JSON.stringify([
       left,
@@ -321,19 +346,19 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
       moonSettings,
       phase === null || phase === undefined ? null : Math.round(phase * 10000),
       settings.exposure,
-      Array.from(skyColumn.subarray(firstRow * 4, lastRow * 4)),
     ]);
-    if (key === moon.key) {
+    if (key === moon.key && sameValues(sky, moon.sky, INSTANT_CHANGE)) {
       // Nothing to draw again, though it may have moved a little
       if (top === moon.top) return false;
       Object.assign(moon, { top, changed: true });
       return true;
     }
-    const image = new ImageData(size, size);
-    renderMoon(image.data, size, moon.image.data, diameter, top, fullHeight, settings);
+    // The pixels are drawn into the same image each time while its size holds
+    if (moon.pixels?.width !== size) moon.pixels = new ImageData(size, size);
+    renderMoon(moon.pixels.data, size, moon.image.data, diameter, top, fullHeight, settings);
     resize(moon.canvas, size, size);
-    moon.canvas.getContext('2d').putImageData(image, 0, 0);
-    Object.assign(moon, { left, top, drawnTop: top, key, changed: true });
+    moon.canvas.getContext('2d').putImageData(moon.pixels, 0, 0);
+    Object.assign(moon, { left, top, drawnTop: top, key, sky, changed: true });
     return true;
   }
 
@@ -426,6 +451,13 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
     setCloudSpeed(speed) {
       cloudTime();
       state.cloudSpeed = speed;
+    },
+
+    // Pauses or resumes cloud motion. New scenes are still drawn while paused.
+    setPaused(paused) {
+      cloudTime();
+      state.paused = paused;
+      if (state.props) updateAnimation();
     },
 
     dispose() {

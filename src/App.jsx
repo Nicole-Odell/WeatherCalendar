@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, memo, useEffect, useMemo, useRef, useState } from 'react';
 import SkyCanvas from './SkyCanvas.jsx';
 import { createStore, useStore } from './store.js';
 import {
@@ -9,6 +9,8 @@ import {
   DEFAULT_MOON,
 } from './skyImage.js';
 import { toImperial } from './units.js';
+import { ICONS, UNKNOWN_ICON, iconClass, iconUrl } from './iconList.js';
+import iconsCss from './icons.css?raw';
 import weatherCodes from './weatherCodes.json';
 
 const luminanceFormat = new Intl.NumberFormat(undefined, { maximumSignificantDigits: 3 });
@@ -26,8 +28,26 @@ async function fetchJson(url) {
   return body;
 }
 
+/*
+ * Date and time formats, each made once and reused. toLocaleTimeString() and
+ * the like make a new formatter on every call, which on the Pi 3's Chromium
+ * leaves memory behind, adding up to all of the Pi's memory within hours.
+ */
+const shortTimeFormat = new Intl.DateTimeFormat([], { hour: 'numeric', minute: '2-digit' });
+const timeFormat = new Intl.DateTimeFormat([], { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+const dateTimeFormat = new Intl.DateTimeFormat([], {
+  year: 'numeric',
+  month: 'numeric',
+  day: 'numeric',
+  hour: 'numeric',
+  minute: '2-digit',
+  second: '2-digit',
+});
+const displayDateFormat = new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
+const displayTimeFormat = new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit' });
+
 function formatTime(isoString) {
-  return new Date(isoString).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  return shortTimeFormat.format(new Date(isoString));
 }
 
 // Cloud cover sliders, in percent, in the order they're shown
@@ -120,7 +140,8 @@ const STEP_MINUTES = 5;
 // The time the Noon button sets, as a time input value
 const NOON = '12:00';
 
-// The sky is recalculated and redrawn this often (ms), fading in over SKY_FADE ms
+// The sky is recalculated and redrawn this often (ms), fading in over SKY_FADE
+// ms. Live, the server streams it (see /api/sky/stream) at the same rate.
 const SKY_UPDATE_INTERVAL = 1000;
 const SKY_FADE = 300;
 // Test play steps the sky color time forward this many minutes each sky update
@@ -128,6 +149,30 @@ const PLAY_STEP_MINUTES = 1;
 // How often the weather is reloaded from the server (ms). The server only
 // fetches new weather every 15 minutes; this picks it up soon after.
 const WEATHER_RELOAD_INTERVAL = 60 * 1000;
+// The kiosk's screen helper (kiosk/display-power.py), which answers only on
+// the Pi showing the display. Anywhere else, bedtime just blacks out the page.
+const SCREEN_POWER = 'http://127.0.0.1:8770/display';
+// How often bedtime checks whether the sun has risen, to wake (ms)
+const SUNRISE_CHECK_INTERVAL = 60 * 1000;
+
+// Turns the kiosk's screen on or off, if this is the kiosk
+async function setScreenPower(on) {
+  try {
+    await fetch(`${SCREEN_POWER}/${on ? 'on' : 'off'}`, { method: 'POST' });
+  } catch {
+    // Not on the kiosk
+  }
+}
+
+// Whether the kiosk's screen is off (false if this isn't the kiosk)
+async function screenIsOff() {
+  try {
+    const response = await fetch(SCREEN_POWER);
+    return (await response.json()).on === false;
+  } catch {
+    return false;
+  }
+}
 // Cloud motion speed, as a multiple of the normal drift
 const DEFAULT_CLOUD_SPEED = 3;
 const MAX_CLOUD_SPEED = 20;
@@ -142,7 +187,7 @@ const skyStore = createStore(null);
 const statusStore = createStore(null);
 
 // The sky behind the page, drawn from the latest sky colors, with the moon
-// where the server says it is
+// where the server says it is. Cloud motion stops while `paused`.
 const LiveSkyCanvas = memo(function LiveSkyCanvas({ moon, ...props }) {
   const sky = useStore(skyStore);
   if (!sky) return null;
@@ -187,7 +232,7 @@ function SkyInfo() {
           Atmosphere tables from {sky.atmosphere.conditions.surfacePressure} hPa,{' '}
           {sky.atmosphere.conditions.temperature} °C, haze{' '}
           {sky.atmosphere.conditions.aerosolOpticalDepth}, built{' '}
-          {new Date(sky.atmosphere.builtAt).toLocaleTimeString()}
+          {timeFormat.format(new Date(sky.atmosphere.builtAt))}
           {sky.atmosphere.rebuilding && ' (rebuilding for new weather)'}
         </p>
       )}
@@ -340,7 +385,7 @@ function WeatherCodesEditor() {
       </table>
       <p>
         {changed
-          ? 'To use these changes, copy this into src/weatherCodes.json, then run node scripts/importMeteocons.mjs and npm run build (or ask Claude to).'
+          ? 'To use these changes, copy this into src/weatherCodes.json, then run node scripts/importMeteocons.mjs and npm run build.'
           : 'No changes yet. This is the current src/weatherCodes.json.'}
       </p>
       <textarea
@@ -352,6 +397,164 @@ function WeatherCodesEditor() {
       />
       <p>
         <button type="button" onClick={() => setEntries(weatherCodes.map((entry) => ({ ...entry })))} disabled={!changed}>
+          Undo changes
+        </button>
+      </p>
+    </>
+  );
+}
+
+// Each icon's spacing adjustments in icons.css, as { name: { margin, top,
+// bottom } } (numbers, in em)
+const SPACING_SIDES = ['margin', 'top', 'bottom'];
+const SPACING_LABELS = { margin: 'sides', top: 'top', bottom: 'bottom' };
+const spacingVariable = (side) => (side === 'margin' ? '--icon-margin' : `--icon-margin-${side}`);
+const ICON_SPACING = Object.fromEntries(
+  [...iconsCss.matchAll(/\.icon-([\w-]+) \{([^}]*)\}/g)].map(([, name, body]) => [
+    name,
+    Object.fromEntries(
+      SPACING_SIDES.map((side) => {
+        const match = body.match(new RegExp(`${spacingVariable(side)}: (-?[\\d.]+)(em)?;`));
+        return [side, match ? Number(match[1]) : 0];
+      }),
+    ),
+  ]),
+);
+
+// icons.css for the given spacing: its explanation, kept from the file, and a
+// line for each icon in use
+function iconsCssFor(spacing) {
+  const header = iconsCss.slice(0, iconsCss.indexOf('*/') + 2);
+  const em = (value) => `${Math.round(value * 100) / 100}em`;
+  const lines = ICONS.map(({ name }) => {
+    const values = SPACING_SIDES.map((side) => `${spacingVariable(side)}: ${em(spacing[name]?.[side] ?? 0)};`);
+    return `.icon-${name} { ${values.join(' ')} }`;
+  });
+  return `${header}\n${lines.join('\n')}\n`;
+}
+
+// Every icon in use, each between text, to adjust its spacing, built only
+// while open
+function IconSpacingSection() {
+  const [open, setOpen] = useState(false);
+  return (
+    <details className="advanced" onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <summary>Icon Spacing</summary>
+      {open && <IconSpacingEditor />}
+    </details>
+  );
+}
+
+/**
+ * Shows each icon the display uses between white boxes (standing in for
+ * text), with no
+ * margins but its own adjustments, at its size on the display relative to the
+ * text beside it. White bars run between the icons (and above the first and
+ * below the last), so their top and bottom edges show. The adjustments can be
+ * changed here, showing straight away, and the changed icons.css is shown
+ * below, to copy into src/icons.css.
+ */
+function IconSpacingEditor() {
+  const [spacing, setSpacing] = useState(ICON_SPACING);
+  const initialInputs = () =>
+    Object.fromEntries(
+      ICONS.map(({ name }) => [
+        name,
+        Object.fromEntries(SPACING_SIDES.map((side) => [side, String(ICON_SPACING[name]?.[side] ?? 0)])),
+      ]),
+    );
+  const [inputs, setInputs] = useState(initialInputs);
+  const [fontSize, setFontSize] = useState('48');
+  const css = iconsCssFor(spacing);
+  const changed = css !== iconsCssFor(ICON_SPACING);
+  const update = (name, side, value) => {
+    setInputs({ ...inputs, [name]: { ...inputs[name], [side]: value } });
+    const number = Number(value);
+    if (value.trim() !== '' && Number.isFinite(number)) {
+      setSpacing({ ...spacing, [name]: { margin: 0, top: 0, bottom: 0, ...spacing[name], [side]: number } });
+    }
+  };
+  const groups = [...new Set(ICONS.map(({ use }) => use))];
+  return (
+    <>
+      <p>
+        Each icon sits between white boxes (standing in for text) and white bars with only its own adjustments,
+        in em of the text beside it (negative pulls them in). Changes show straight away.
+      </p>
+      <p>
+        <label>
+          Sample size:{' '}
+          <input type="number" min="8" step="1" value={fontSize} onChange={(event) => setFontSize(event.target.value)} />{' '}
+          px
+        </label>
+      </p>
+      {groups.map((use) => (
+        <div key={use}>
+          <h4>{use}</h4>
+          <div className="icon-spacing">
+            <div className="icon-spacing-bar" />
+            {ICONS.filter((icon) => icon.use === use).map(({ name, style, size }) => (
+              <Fragment key={name}>
+                <div className="icon-spacing-row">
+                  <span className="icon-spacing-name">{name}</span>
+                  <span className="icon-spacing-sample" style={{ fontSize: `${Number(fontSize) || 48}px` }}>
+                    <span className="icon-spacing-box" />
+                    <img
+                      className={iconClass(name)}
+                      src={iconUrl(name, style)}
+                      alt={name}
+                      style={{
+                        width: `${size}em`,
+                        height: `${size}em`,
+                        ...Object.fromEntries(
+                          SPACING_SIDES.map((side) => [spacingVariable(side), `${spacing[name]?.[side] ?? 0}em`]),
+                        ),
+                      }}
+                    />
+                    <span className="icon-spacing-box" />
+                  </span>
+                  <span className="icon-spacing-fields">
+                    {SPACING_SIDES.map((side) => (
+                      <label key={side} className="icon-spacing-field">
+                        {SPACING_LABELS[side]}{' '}
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={inputs[name][side]}
+                          onChange={(event) => update(name, side, event.target.value)}
+                        />{' '}
+                        em
+                      </label>
+                    ))}
+                  </span>
+                </div>
+                <div className="icon-spacing-bar" />
+              </Fragment>
+            ))}
+          </div>
+        </div>
+      ))}
+      <p>
+        {changed
+          ? 'To keep these, copy this into src/icons.css, then run npm run deploy.'
+          : 'No changes yet. This is the current src/icons.css.'}
+      </p>
+      <textarea
+        className="weather-codes-json"
+        readOnly
+        value={css}
+        rows={12}
+        onFocus={(event) => event.target.select()}
+      />
+      <p>
+        <button
+          type="button"
+          disabled={!changed}
+          onClick={() => {
+            setSpacing(ICON_SPACING);
+            setInputs(initialInputs());
+          }}
+        >
           Undo changes
         </button>
       </p>
@@ -400,13 +603,11 @@ function SkyColorTable() {
 // Each weather code's name and icons (Meteocons, full color), from
 // weatherCodes.json. Codes not listed there show UNKNOWN_ICON.
 const WEATHER_CODES = new Map(weatherCodes.map((entry) => [entry.code, entry]));
-const UNKNOWN_ICON = 'not-available';
-// Meteocons icons, without animation (see scripts/importMeteocons.mjs): the
-// weather codes' in full color, and every other icon in white
-const weatherIconUrl = (name) => `/icons/meteocons/fill/${name}.svg`;
-const whiteIconUrl = (name) => `/icons/meteocons/white/${name}.svg`;
+// Meteocons icons (see iconList.js): full color, and one-color in white
+const weatherIconUrl = (name) => iconUrl(name, 'fill');
+const whiteIconUrl = (name) => iconUrl(name, 'white');
 // Shown in place of a value that isn't available
-const MISSING = '-';
+const MISSING = '*';
 
 // A temperature from the weather as whole °F, or MISSING
 function wholeFahrenheit(weather, field) {
@@ -427,52 +628,138 @@ function DateAndTime({ children }) {
     timer = setTimeout(tick, 60000 - (Date.now() % 60000) + 50);
     return () => clearTimeout(timer);
   }, []);
-  const date = now.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
-  const time = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }).toLowerCase();
+  const date = displayDateFormat.format(now);
+  const time = displayTimeFormat.format(now).toLowerCase();
   return children({ date, time });
 }
 
-// A value with a white icon after it, as in the bottom row of the display
-function ValueWithIcon({ value, icon, label }) {
+// The US Air Quality Index's categories (the EPA's scale): the highest AQI
+// in each, and its standard color
+const AQI_CATEGORIES = [
+  { upTo: 50, name: 'Good', color: '#00E400' },
+  { upTo: 100, name: 'Moderate', color: '#FFFF00' },
+  { upTo: 150, name: 'Unhealthy for Sensitive Groups', color: '#FF7E00' },
+  { upTo: 200, name: 'Unhealthy', color: '#FF0000' },
+  { upTo: 300, name: 'Very Unhealthy', color: '#8F3F97' },
+  { upTo: Infinity, name: 'Hazardous', color: '#7E0023' },
+];
+const aqiCategory = (aqi) => AQI_CATEGORIES.find((category) => aqi <= category.upTo);
+
+/**
+ * A value with an icon after it, as in the bottom row of the display: the
+ * full-color icon, or with `color`, the one-color icon in that color (along
+ * with the value)
+ */
+function ValueWithIcon({ value, icon, label, color }) {
   return (
-    <span className="weather-detail" title={label}>
+    <span className="weather-detail" title={label} style={color ? { color } : undefined}>
       {value}
-      <img className="detail-icon" src={whiteIconUrl(icon)} alt={label} />
+      {color ? (
+        // The one-color icon as a mask over the color. The shadow is on a
+        // wrapper, as the mask would hide a shadow on the icon itself.
+        <span className="detail-icon-shadow" role="img" aria-label={label}>
+          <span
+            className={`detail-icon colored-icon ${iconClass(icon)}`}
+            style={{
+              backgroundColor: color,
+              WebkitMaskImage: `url(${whiteIconUrl(icon)})`,
+              maskImage: `url(${whiteIconUrl(icon)})`,
+            }}
+          />
+        </span>
+      ) : (
+        <img className={`detail-icon ${iconClass(icon)}`} src={weatherIconUrl(icon)} alt={label} />
+      )}
     </span>
   );
 }
 
 // The main display: the date, time and current weather
-const WeatherDisplay = memo(function WeatherDisplay({ weather }) {
+// Pollen categories in the order they're shown, and each level's icon name
+// and label (level 0, none, shows no icon)
+const POLLEN_CATEGORIES = [
+  { key: 'grass', name: 'Grass' },
+  { key: 'tree', name: 'Tree' },
+  { key: 'weed', name: 'Weed' },
+];
+const POLLEN_LEVELS = [null, { icon: 'low', name: 'Low' }, { icon: 'moderate', name: 'Moderate' }, { icon: 'high', name: 'High' }, { icon: 'very-high', name: 'Very High' }];
+
+// The current UV index's icon, showing its number (11-plus above 11), or
+// nothing when it's 0 (Meteocons has no icon for 0)
+function UvIcon({ uvIndex }) {
+  const uv = typeof uvIndex === 'number' ? Math.round(uvIndex) : 0;
+  if (uv <= 0) return null;
+  const icon = uv > 11 ? 'uv-index-11-plus' : `uv-index-${uv}`;
+  return (
+    <span className="weather-detail">
+      <img
+        className={`detail-icon ${iconClass(icon)}`}
+        src={weatherIconUrl(icon)}
+        alt={`UV index ${uv}`}
+        title={`UV index: ${uv}`}
+      />
+    </span>
+  );
+}
+
+// A pollen icon for each category with any pollen (from /api/pollen), or
+// nothing at all if none has any
+function PollenIcons({ pollen }) {
+  const shown = POLLEN_CATEGORIES.filter(({ key }) => pollen?.levels[key] > 0);
+  if (shown.length === 0) return null;
+  return (
+    <span className="weather-detail pollen-icons">
+      {shown.map(({ key, name }) => {
+        const level = POLLEN_LEVELS[pollen.levels[key]];
+        const label = `${name} pollen: ${level.name}`;
+        return (
+          <img
+            key={key}
+            className={`detail-icon ${iconClass(`pollen-${key}-${level.icon}`)}`}
+            src={weatherIconUrl(`pollen-${key}-${level.icon}`)}
+            alt={label}
+            title={label}
+          />
+        );
+      })}
+    </span>
+  );
+}
+
+const WeatherDisplay = memo(function WeatherDisplay({ weather, pollen }) {
   const current = weather?.current;
   const code = current ? WEATHER_CODES.get(current.weather_code) : undefined;
   const night = current?.is_day === 0;
   const icon = (night && code?.nightIcon) || code?.icon || UNKNOWN_ICON;
   const condition = code?.name ?? (current ? `Weather code ${current.weather_code}` : MISSING);
-  const aqi = typeof current?.us_aqi === 'number' ? String(Math.round(current.us_aqi)) : MISSING;
+  const aqi = typeof current?.us_aqi === 'number' ? Math.round(current.us_aqi) : null;
   return (
     <section className="weather-display">
       <DateAndTime>
         {({ date, time }) => (
           <>
             <div className="weather-date">{date}</div>
-            <div className="weather-now">
-              <img className="weather-icon" src={weatherIconUrl(icon)} alt="" />
-              <div>
-                <div className="weather-time">{time}</div>
-                <div className="weather-condition">{condition}</div>
-              </div>
-            </div>
+            <div className="weather-time">{time}</div>
           </>
         )}
       </DateAndTime>
+      <div className="weather-condition">{condition}</div>
+      <div className="weather-now">
+        <img className={`weather-icon ${iconClass(icon)}`} src={weatherIconUrl(icon)} alt="" />
+        <div className="weather-temperature" title="Feels like">
+          {wholeFahrenheit(weather, 'apparent_temperature')}
+          <img className={`temperature-unit ${iconClass('fahrenheit')}`} src={whiteIconUrl('fahrenheit')} alt="°F" />
+        </div>
+      </div>
       <div className="weather-details">
-        <span className="weather-detail" title="Feels like (actual temperature)">
-          {wholeFahrenheit(weather, 'apparent_temperature')}° ({wholeFahrenheit(weather, 'temperature_2m')})
-        </span>
-        <ValueWithIcon value={aqi} icon="smoke" label="US Air Quality Index" />
-        {/* Pollen: not available from the APIs in use for this location yet */}
-        <ValueWithIcon value={MISSING} icon="pollen-flower" label="Pollen" />
+        <UvIcon uvIndex={current?.uv_index} />
+        <ValueWithIcon
+          value={aqi === null ? MISSING : aqi}
+          icon="smoke-particles"
+          label={aqi === null ? 'US Air Quality Index' : `US Air Quality Index: ${aqiCategory(aqi).name}`}
+          color={aqi === null ? 'white' : aqiCategory(aqi).color}
+        />
+        <PollenIcons pollen={pollen} />
       </div>
     </section>
   );
@@ -496,7 +783,7 @@ const WeatherTable = memo(function WeatherTable({ weather }) {
           })}
         </tbody>
       </table>
-      <p>Last updated: {new Date(weather.fetchedAt).toLocaleString()}</p>
+      <p>Last updated: {dateTimeFormat.format(new Date(weather.fetchedAt))}</p>
     </>
   );
 });
@@ -549,6 +836,8 @@ export default function App() {
   const [weatherError, setWeatherError] = useState(null);
   const [loading, setLoading] = useState(false);
   const [sunTimes, setSunTimes] = useState(null);
+  // Today's pollen levels, from pollen.com (see server/PollenManager.js)
+  const [pollen, setPollen] = useState(null);
   const [sunError, setSunError] = useState(null);
   const [skyError, setSkyError] = useState(null);
   // Time the sky colors are calculated for, as "HH:MM", or '' for now
@@ -575,6 +864,11 @@ export default function App() {
   const [cloudInputs, setCloudInputs] = useState(NO_CLOUDS);
   // Whether the settings are showing, in place of the weather display
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // Bedtime: the screen is off (on the kiosk) and the page is covered in
+  // black, with the per-second sky updates and cloud motion paused, until a
+  // tap or sunrise wakes it. Weather updates carry on.
+  const [asleep, setAsleep] = useState(false);
+  const asleepSince = useRef(0);
   // How bright clouds are compared to the sky, and what's in its inputs until applied
   const [cloudBrightness, setCloudBrightness] = useState(DEFAULT_CLOUD_BRIGHTNESS);
   const [cloudBrightnessInputs, setCloudBrightnessInputs] = useState({
@@ -631,6 +925,15 @@ export default function App() {
       setWeatherError(err.message);
     } finally {
       setLoading(false);
+    }
+  }
+
+  // Pollen is only shown when it loads, so a failure just leaves it out
+  async function loadPollen() {
+    try {
+      setPollen(await fetchJson('/api/pollen'));
+    } catch (err) {
+      console.warn('Pollen unavailable:', err.message);
     }
   }
 
@@ -773,15 +1076,78 @@ export default function App() {
 
   useEffect(() => {
     loadWeather().then(() => loadSkyColors(''));
+    loadPollen();
     loadSunTimes();
   }, []);
 
-  // Every SKY_UPDATE_INTERVAL, the sky is recalculated for the time in use
-  // (stepped forward first while test play is on), unless the last update is
-  // still waiting for its answer
+  function goToSleep() {
+    asleepSince.current = Date.now();
+    setAsleep(true);
+    setScreenPower(false);
+  }
+
+  // Shows the page again, caught up straight away
+  function wake() {
+    setAsleep(false);
+    setScreenPower(true);
+    loadSkyColors(skyTime);
+    loadWeather();
+  }
+  const wakeRef = useRef(null);
+  wakeRef.current = wake;
+
+  // A page loaded while the kiosk's screen is off (say, reloaded overnight)
+  // starts in bedtime, so a tap still wakes it
+  useEffect(() => {
+    screenIsOff().then((off) => {
+      if (off) {
+        asleepSince.current = Date.now();
+        setAsleep(true);
+      }
+    });
+  }, []);
+
+  // In bedtime, wakes at the first sunrise after going to sleep
+  useEffect(() => {
+    if (!asleep) return undefined;
+    const check = async () => {
+      try {
+        const { times } = await fetchJson('/api/time-of-day/sun-times');
+        const sunrise = Date.parse(times.sunrise);
+        if (sunrise > asleepSince.current && Date.now() >= sunrise) wakeRef.current();
+      } catch {
+        // Tried again at the next check
+      }
+    };
+    const timer = setInterval(check, SUNRISE_CHECK_INTERVAL);
+    return () => clearInterval(timer);
+  }, [asleep]);
+
+  // Live (the sky for now, while awake and not testing), the sky comes from
+  // the server's stream: one long-lived connection, as on the Pi 3's Chromium
+  // a request every second leaks memory. Test times in Settings fetch it.
+  const streaming = !asleep && !playing && skyTime === '';
+  useEffect(() => {
+    if (!streaming) return undefined;
+    const source = new EventSource('/api/sky/stream');
+    source.onmessage = (event) => {
+      // Overrides any fetch for a test time still under way
+      latestSkyRequest.current++;
+      skyRequestPending.current = false;
+      skyStore.set(JSON.parse(event.data));
+      setSkyError(null);
+    };
+    // The browser reconnects by itself
+    source.onerror = () => setSkyError('The live sky updates were interrupted; reconnecting');
+    return () => source.close();
+  }, [streaming]);
+
+  // Every SKY_UPDATE_INTERVAL while testing, the sky is fetched for the time in
+  // use (stepped forward first while test play is on), unless the last fetch
+  // is still waiting for its answer or it's bedtime
   const skyUpdate = useRef(null);
   skyUpdate.current = () => {
-    if (skyRequestPending.current) return;
+    if (asleep || streaming || skyRequestPending.current) return;
     if (playing) stepSkyTime(PLAY_STEP_MINUTES);
     else loadSkyColors(skyTime);
   };
@@ -790,9 +1156,13 @@ export default function App() {
     return () => clearInterval(timer);
   }, []);
 
-  // The weather is reloaded regularly, to pick up the server's new weather
+  // The weather and pollen are reloaded regularly, to pick up the server's new
+  // data (the server only fetches new pollen hourly)
   useEffect(() => {
-    const timer = setInterval(() => loadWeather(), WEATHER_RELOAD_INTERVAL);
+    const timer = setInterval(() => {
+      loadWeather();
+      loadPollen();
+    }, WEATHER_RELOAD_INTERVAL);
     return () => clearInterval(timer);
   }, []);
 
@@ -807,15 +1177,22 @@ export default function App() {
         hazeContrast={hazeContrast}
         moon={moon}
         cloudSpeed={cloudSpeed}
+        paused={asleep}
       />
       <button
         type="button"
-        className="content-toggle"
+        className="corner-button content-toggle"
         onClick={() => setSettingsOpen(!settingsOpen)}
       >
         {settingsOpen ? 'Back' : 'Settings'}
       </button>
-      {!settingsOpen && <WeatherDisplay weather={weather} />}
+      <button type="button" className="corner-button bedtime-toggle" onClick={goToSleep} title="Bedtime">
+        <img className={iconClass('starry-night')} src={whiteIconUrl('starry-night')} alt="Bedtime: turn the screen off" />
+      </button>
+      {/* In bedtime, covers everything, so the tap that wakes the page doesn't
+          also press what's under it */}
+      {asleep && <div className="bedtime-overlay" onClick={wake} />}
+      {!settingsOpen && <WeatherDisplay weather={weather} pollen={pollen} />}
       <main className="app" style={{ display: settingsOpen ? undefined : 'none' }}>
         {weather && <WeatherTable weather={weather} />}
         {weatherError && <p>Weather error: {weatherError}</p>}
@@ -1127,6 +1504,7 @@ export default function App() {
         </details>
 
         <WeatherCodesSection />
+        <IconSpacingSection />
 
         <p>
           <button type="button" onClick={refresh} disabled={loading}>

@@ -1,0 +1,19 @@
+# Runs memory-watchdog.sh on the kiosk Pi, from boot. To install (as user pi):
+#   cp memory-watchdog.sh ~/memory-watchdog.sh
+#   sudo cp memory-watchdog.service /etc/systemd/system/
+#   sudo systemctl enable --now memory-watchdog
+[Unit]
+Description=Weather display memory watchdog
+After=network.target
+
+[Service]
+User=pi
+# The kiosk it restarts draws on the Pi's screen
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/pi/.Xauthority
+ExecStart=/bin/sh /home/pi/memory-watchdog.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
