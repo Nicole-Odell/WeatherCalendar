@@ -41,6 +41,8 @@ export const ICONS = [
   { name: 'fahrenheit', style: 'white', size: 1.8, use: 'Temperature' },
   { name: 'sunrise', style: 'white', size: 2, use: 'Sunrise and sunset' },
   { name: 'sunset', style: 'white', size: 2, use: 'Sunrise and sunset' },
+  { name: 'moonrise', style: 'white', size: 1.5, use: 'Moonrise and moonset' },
+  { name: 'moonset', style: 'white', size: 1.5, use: 'Moonrise and moonset' },
   // (those also used for weather codes are listed there; their forecast-size
   // margins are in index.css)
   ...PRECIPITATION_ICONS.filter((name) => !weatherIcons.includes(name)).map((name) => ({
@@ -56,5 +58,5 @@ export const ICONS = [
     size: 1.5,
     use: 'Humidity and wind',
   })),
-  { name: 'starry-night', style: 'white', size: 1.5, use: 'Bedtime button' },
+  { name: 'bedtime-mode', style: 'white', size: 1.5, use: 'Bedtime button' },
 ];

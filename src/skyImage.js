@@ -686,7 +686,7 @@ function moonSurfaceBrightness(phase) {
  * only as much as it outshines them.
  */
 export function renderMoon(pixels, size, picture, diameter, top, screenHeight, settings) {
-  const { toScreen, skyAt } = prepareScene(settings);
+  const { toScreenUndimmed: toScreen, skyAt } = prepareScene(settings);
   const { luminance, contrast, glow, glowWidth, terminatorSoftness, phase: givenPhase, rotation, brightLimb } = {
     ...DEFAULT_MOON,
     ...settings.moon,
@@ -1105,23 +1105,55 @@ function colorOver(behind, light, alpha, channel) {
 }
 
 /*
- * Stars: a fixed field, with far more faint stars than bright ones (about 3
- * times as many for each magnitude fainter, roughly as in the real sky). The
- * brightest have STAR_MAX_BRIGHTNESS times the exposure floor's luminance, and
- * the faintest are at the floor. They're spread by starDensity: a thin
- * background everywhere, noisy clumps, and a Milky Way–like band.
+ * Stars: a fixed field with the naked eye's range of magnitudes, from
+ * Sirius's to the faintest visible on a dark night, and about 3 times as many
+ * stars for each magnitude fainter, as in the real sky: a few very bright
+ * stars, and more and more of each fainter magnitude. Each is drawn as one
+ * pixel, so its luminance is its light at the eye spread over a pixel's patch
+ * of sky; that's what's compared with the sky behind it, so the brightest
+ * come out first in twilight and the faintest only once it's dark. They're
+ * spread by starDensity: a thin background everywhere, noisy clumps, and a
+ * Milky Way–like band.
  */
 const STAR_COUNT = 9000;
-const STAR_MAX_BRIGHTNESS = 10; // times the exposure floor
-const STAR_MAGNITUDE_RANGE = 2.5; // 2.5 magnitudes is a factor of 10 in brightness
+const STAR_BRIGHTEST_MAGNITUDE = -1.46; // Sirius
+const STAR_FAINTEST_MAGNITUDE = 6; // the naked eye's limit on a dark night
+// Illuminance at the eye from a magnitude 0 star (lux)
+const MAGNITUDE_0_ILLUMINANCE = 2.54e-6;
+// The patch of sky a pixel covers (steradians): the display's 1920 rows show
+// 75° of sky, about 2.3 arcminutes a pixel
+const STAR_PIXEL_ANGLE = (75 / 1920) * (Math.PI / 180);
+const STAR_PIXEL_SOLID_ANGLE = STAR_PIXEL_ANGLE * STAR_PIXEL_ANGLE;
+// A star's luminance (cd/m²) over its pixel, from its magnitude
+const starLuminance = (magnitude) => (MAGNITUDE_0_ILLUMINANCE * 10 ** (-0.4 * magnitude)) / STAR_PIXEL_SOLID_ANGLE;
+const BRIGHTEST_STAR_LUMINANCE = starLuminance(STAR_BRIGHTEST_MAGNITUDE);
+// Picks a magnitude for a star from a random number (0–1), so that counts
+// rise by 10^0.5 per magnitude fainter: `share` of the stars are brighter
+// than the magnitude it gives for `share`
+const STAR_MAGNITUDE_RANGE = STAR_FAINTEST_MAGNITUDE - STAR_BRIGHTEST_MAGNITUDE;
+const starMagnitude = (share) =>
+  STAR_BRIGHTEST_MAGNITUDE + 2 * Math.log10(1 + share * (10 ** (STAR_MAGNITUDE_RANGE / 2) - 1));
 // Stars brighten as the whole sky goes dark, like eyes adjusting to the dark.
 // While the brightest sky color's on-screen brightness is at or above this,
 // stars use the sky's exposure. As it falls to black, they shift to a scale
-// where the brightest star is full brightness.
+// that rises evenly by magnitude from black at STAR_BLACK_MAGNITUDE (so the
+// faintest are dim but visible) to the brightest star. That scale is then
+// stretched so settings.stars.fullWhiteLevel (0–1 on it, see DEFAULT_STARS)
+// is full brightness: stars at or above it are full white, and those below
+// are brightened by the same factor. Stars at or above
+// settings.stars.largeLevel on the same scale are drawn twice as wide and
+// tall (1 is only the very brightest).
 const STAR_DARK_ADAPTATION_START = 0.3;
-// Stars have eigengrau's hue and saturation, fading to white from this share
-// of the brightest star's brightness up to the brightest
-const STAR_WHITE_START = 0.4;
+const STAR_BLACK_MAGNITUDE = 7;
+const STAR_BLACK_LUMINANCE = starLuminance(STAR_BLACK_MAGNITUDE);
+export const DEFAULT_STARS = { fullWhiteLevel: 0.6, largeLevel: 0.75 };
+// The magnitude at a level (0–1) on the stars' scale: black at 0, the
+// brightest star at 1
+const magnitudeAtLevel = (level) =>
+  STAR_BLACK_MAGNITUDE - level * (STAR_BLACK_MAGNITUDE - STAR_BRIGHTEST_MAGNITUDE);
+// Stars have eigengrau's hue and saturation, fading to white from this many
+// magnitudes fainter than full brightness, so those at full brightness are white
+const STAR_WHITE_RANGE = 1.5;
 // The Milky Way band: a line across the screen (from `start` to `end`, as
 // shares of the screen's width and height) and how wide its core is
 const MILKY_WAY = { start: [0, 0.2], end: [1, 0.9], width: 0.09 };
@@ -1133,10 +1165,12 @@ const MAX_STAR_DENSITY = STAR_BACKGROUND_DENSITY + STAR_CLUMP_DENSITY + STAR_BAN
 // A faint glow where stars are densest, like the Milky Way's light from stars
 // too faint to see one by one. It starts at STAR_GLOW_START of the densest
 // star density, rising from the exposure floor (not visible) to
-// STAR_GLOW_BRIGHTNESS times the floor (about as bright as the dimmest stars
-// shown), tinted slightly blue.
+// STAR_GLOW_BRIGHTNESS times the floor, tinted slightly blue. Once dark, it's
+// shown on a scale from the floor (black) to STAR_GLOW_SCALE times it (full
+// brightness).
 const STAR_GLOW_START = 0.15;
 const STAR_GLOW_BRIGHTNESS = 1.15;
+const STAR_GLOW_SCALE = 10;
 const STAR_GLOW_TINT = [0.85, 0.92, 1];
 
 // Relative star density at a position (shares of the screen's width and height)
@@ -1168,9 +1202,8 @@ const STARS = (() => {
     const across = random();
     const up = random();
     if (random() * MAX_STAR_DENSITY > starDensity(across, up)) continue;
-    // Picks a magnitude so that counts rise by 10^0.5 per magnitude fainter
-    const magnitude = 2 * Math.log10(1 + random() * (10 ** (STAR_MAGNITUDE_RANGE / 2) - 1));
-    stars.push({ across, up, brightness: 10 ** (-0.4 * magnitude) });
+    const magnitude = starMagnitude(random());
+    stars.push({ across, up, magnitude, luminance: starLuminance(magnitude) });
   }
   return stars;
 })();
@@ -1178,19 +1211,25 @@ const STARS = (() => {
 /**
  * Returns a function giving the on-screen brightness (0–1) of starlight of a
  * given luminance at a height on screen (0 at the bottom, 1 at the top).
- * Starlight only shows where it's brighter than the sky behind it. The cloud
- * and haze layers are drawn over the stars, so they cover them.
+ * Starlight only shows where it's brighter than the sky behind it, and by
+ * the sky's exposure it adds what it brightens the sky by. Once the sky is
+ * dark it's on a scale from `black` (luminance shown as black) to `full`
+ * (shown at full brightness). The cloud and haze layers are drawn over the
+ * stars, so they cover them.
  */
-function starlightScale(settings) {
-  const { toScreen, skyAt } = prepareScene(settings);
+function starlightScale(settings, black, full) {
+  const { toScreen, toScreenUndimmed, skyAt } = prepareScene(settings);
   const { floor } = settings.exposure;
   const brightestSky = Math.max(...settings.colors.map((color) => color.brightness));
-  // 0 when the whole sky is black, 1 once it's bright enough to use the sky's exposure
-  const skyExposureShare = clamp(toScreen(brightestSky) / STAR_DARK_ADAPTATION_START, 0, 1);
+  // 0 when the whole sky is black, 1 once it's bright enough to use the sky's
+  // exposure (by its real brightness, without twilight dimming)
+  const skyExposureShare = clamp(toScreenUndimmed(brightestSky) / STAR_DARK_ADAPTATION_START, 0, 1);
   return (luminance, up) => {
-    if (luminance <= skyAt(up).luminance) return 0;
-    const darkAdapted = clamp(Math.log(luminance / floor) / Math.log(STAR_MAX_BRIGHTNESS), 0, 1);
-    return darkAdapted + (toScreen(luminance) - darkAdapted) * skyExposureShare;
+    const sky = skyAt(up).luminance;
+    if (luminance <= sky) return 0;
+    const darkAdapted = clamp(Math.log(luminance / black) / Math.log(full / black), 0, 1);
+    const overSky = clamp(toScreen(sky + luminance) - toScreen(sky), 0, 1);
+    return darkAdapted + (overSky - darkAdapted) * skyExposureShare;
   };
 }
 
@@ -1218,8 +1257,8 @@ function glowStrengths(width, height) {
  * black where there's no glow), to be scaled up under the stars
  */
 export function renderStarGlow(pixels, width, height, settings) {
-  const starlight = starlightScale(settings);
   const { floor } = settings.exposure;
+  const starlight = starlightScale(settings, floor, STAR_GLOW_SCALE * floor);
   const strengths = glowStrengths(width, height);
   for (let row = 0; row < height; row++) {
     for (let column = 0; column < width; column++) {
@@ -1245,11 +1284,10 @@ export function renderStarGlow(pixels, width, height, settings) {
  * matters, so the key is from that. In between (twilight) it's null, and they
  * have to be worked out.
  */
-export function starsKey({ colors, exposure }) {
-  const brightestStar = STAR_MAX_BRIGHTNESS * exposure.floor;
-  if (colors.every((color) => color.brightness >= brightestStar)) return 'day';
+export function starsKey({ colors, exposure, stars }) {
+  if (colors.every((color) => color.brightness >= BRIGHTEST_STAR_LUMINANCE)) return 'day';
   if (colors.every((color) => color.brightness < exposure.floor)) {
-    return `night ${exposure.floor} ${exposure.ceiling}`;
+    return `night ${exposure.floor} ${exposure.ceiling} ${JSON.stringify(stars)}`;
   }
   return null;
 }
@@ -1260,13 +1298,14 @@ export function starsKey({ colors, exposure }) {
  * whether the stars need redrawing.
  */
 export function starColors(settings) {
-  const starlight = starlightScale(settings);
-  const brightest = STAR_MAX_BRIGHTNESS * settings.exposure.floor;
+  const { fullWhiteLevel } = { ...DEFAULT_STARS, ...settings.stars };
+  const fullMagnitude = magnitudeAtLevel(clamp(fullWhiteLevel, 0.01, 1));
+  const starlight = starlightScale(settings, STAR_BLACK_LUMINANCE, starLuminance(fullMagnitude));
   const colors = new Uint8Array(STARS.length * 3);
   STARS.forEach((star, i) => {
-    const level = 255 * starlight(brightest * star.brightness, star.up);
+    const level = 255 * starlight(star.luminance, star.up);
     if (level < 0.5) return;
-    const whiteness = smoothstep(STAR_WHITE_START, 1, star.brightness);
+    const whiteness = smoothstep(fullMagnitude + STAR_WHITE_RANGE, fullMagnitude, star.magnitude);
     EIGENGRAU_TINT.forEach((tint, channel) => {
       colors[i * 3 + channel] = Math.round(level * (tint + (1 - tint) * whiteness));
     });
@@ -1276,20 +1315,19 @@ export function starColors(settings) {
 
 /**
  * Draws the stars, in `colors` from starColors, onto the canvas `context`
- * (width × height pixels), each `starSize` pixels square, to go over the sky
- * with a screen blend
+ * (width × height pixels), each `starSize` pixels square, or twice that for
+ * those at or above settings.stars.largeLevel, to go over the sky with a
+ * screen blend
  */
-export function drawStars(context, width, height, colors, starSize) {
+export function drawStars(context, width, height, colors, starSize, settings) {
+  const { largeLevel } = { ...DEFAULT_STARS, ...settings.stars };
+  const largeMagnitude = magnitudeAtLevel(clamp(largeLevel, 0, 1));
   STARS.forEach((star, i) => {
     const [red, green, blue] = colors.subarray(i * 3, i * 3 + 3);
     if (red === 0 && green === 0 && blue === 0) return;
+    const size = star.magnitude <= largeMagnitude ? 2 * starSize : starSize;
     context.fillStyle = `rgb(${red} ${green} ${blue})`;
-    context.fillRect(
-      Math.floor(star.across * width),
-      Math.floor((1 - star.up) * height),
-      starSize,
-      starSize,
-    );
+    context.fillRect(Math.floor(star.across * width), Math.floor((1 - star.up) * height), size, size);
   });
 }
 
@@ -1310,6 +1348,7 @@ function prepareScene({
   const toScreen = exposureScale(
     colors.map((color) => color.brightness),
     exposure,
+    sunElevation,
   );
   const skyStops = colors.map(({ hue, saturation, brightness }) =>
     withScreenBrightness(hsvToLinearRgb(hue, saturation, 1), toScreen(brightness)),
@@ -1370,12 +1409,32 @@ function prepareScene({
 
   return {
     toScreen,
+    // (without the twilight dimming, for the moon and the stars' adjusting to
+    // the dark, which follow the sky's real brightness)
+    toScreenUndimmed: exposureScale(
+      colors.map((color) => color.brightness),
+      exposure,
+    ),
     skyAt,
     layers,
     hazeOpacity: HAZE_MAX_OPACITY * hazeThickness,
     hazeDimming: HAZE_MAX_DIMMING * hazeThickness,
     cloudMaxOpacity,
   };
+}
+
+/**
+ * The on-screen brightness (0–1) of the sky color at the top of the screen,
+ * as the sky is drawn (with twilight dimming), from the scene's `colors`,
+ * `exposure` and `sunElevation`
+ */
+export function topSkyBrightness({ colors, exposure, sunElevation }) {
+  const toScreen = exposureScale(
+    colors.map((color) => color.brightness),
+    exposure,
+    sunElevation,
+  );
+  return toScreen(colors[colors.length - 1].brightness);
 }
 
 /**
@@ -1386,11 +1445,40 @@ function prepareScene({
  * human vision does. Anything dimmer than the floor is black, and anything
  * brighter than full brightness is full brightness.
  */
-function exposureScale(skyLuminances, { floor, ceiling }) {
+function exposureScale(skyLuminances, { floor, ceiling }, sunElevation = 0) {
   const top = Math.max(ceiling, ...skyLuminances);
   const range = Math.log(top / floor);
-  return (luminance) =>
+  const scale = (luminance) =>
     luminance < floor ? 0 : Math.min(1, Math.log(luminance / floor) / range);
+  const dimming = twilightDimming(scale(Math.max(...skyLuminances)), sunElevation);
+  return (luminance) => scale(luminance) * dimming;
+}
+
+/*
+ * Twilight dimming: once the sun has set, the logarithmic scale
+ * keeps the sky looking nearly as bright as afternoon, while to the eye it
+ * dims fast. So the whole scene's on-screen brightness is scaled down to take
+ * the brightest sky color from its brightness b (0–1) to b^power: a sharp
+ * drop at first, then a slower fade than without it, reaching black at the
+ * same point. The power rises smoothly from 1 at sunset (SUNSET_ELEVATION) to
+ * TWILIGHT_DIMMING_POWER once the sun is TWILIGHT_DIMMING_RAMP degrees lower,
+ * so it never jumps.
+ */
+const TWILIGHT_DIMMING_POWER = 1.8;
+// The sun's elevation at sunrise and sunset (degrees), as the sun times use:
+// its top edge on the horizon, with the atmosphere's refraction
+const SUNSET_ELEVATION = -0.833;
+const TWILIGHT_DIMMING_RAMP = 4;
+
+// The factor twilight dimming scales on-screen brightness by, for a scene
+// whose brightest sky color is `brightest` (0–1) on screen without it
+function twilightDimming(brightest, sunElevation) {
+  if (!(brightest > 0) || sunElevation >= SUNSET_ELEVATION) return 1;
+  const power =
+    1 +
+    (TWILIGHT_DIMMING_POWER - 1) *
+      smoothstep(SUNSET_ELEVATION, SUNSET_ELEVATION - TWILIGHT_DIMMING_RAMP, sunElevation);
+  return brightest ** (power - 1);
 }
 
 /**

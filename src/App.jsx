@@ -7,6 +7,8 @@ import {
   DEFAULT_CLOUD_LIGHTING,
   DEFAULT_HAZE_CONTRAST,
   DEFAULT_MOON,
+  DEFAULT_STARS,
+  topSkyBrightness,
 } from './skyImage.js';
 import { toImperial } from './units.js';
 import { forecastFor } from './forecastWindow.js';
@@ -52,6 +54,19 @@ function formatTime(isoString) {
 }
 
 // Cloud cover sliders, in percent, in the order they're shown
+// Precipitation's sliders: intensity from 0 to 100
+const PRECIPITATION_SLIDERS = [
+  { name: 'rain', label: 'Rain' },
+  { name: 'snow', label: 'Snow' },
+];
+const NO_PRECIPITATION = { rain: 0, snow: 0 };
+
+// The precipitation shown for the current weather. Not hooked up to the
+// weather yet, so there's none until it's set in Settings.
+function precipitationFromWeather() {
+  return NO_PRECIPITATION;
+}
+
 const CLOUD_SLIDERS = [
   { name: 'total', label: 'Total' },
   { name: 'high', label: 'High (8+ km)' },
@@ -105,6 +120,11 @@ const MOON_FIELDS = {
   glow: { label: 'Glow (share of the lit surface’s luminance where it starts)' },
   glowWidth: { label: 'Glow reach', unit: 'moon radii' },
   terminatorSoftness: { label: 'Terminator softness', unit: 'moon radii' },
+};
+// Star settings (sliders from 0 to 1), with labels
+const STAR_FIELDS = {
+  fullWhiteLevel: 'Full white once dark at (brightness, 1 is the brightest star; brighter ones are white too)',
+  largeLevel: 'Twice as large at (brightness, 1 is only the brightest star)',
 };
 const NO_CLOUDS = { total: 0, low: 0, mid: 0, high: 0 };
 
@@ -208,6 +228,23 @@ const LiveSkyCanvas = memo(function LiveSkyCanvas({ moon, ...props }) {
       {...props}
     />
   );
+});
+
+// Below this on-screen brightness of the sky's top row (0–1), the corner
+// buttons' shadow outlines turn white, to show against the dark
+const DARK_SKY_BRIGHTNESS = 0.3;
+
+// Marks the page with .dark-sky while the top of the sky is dark (see
+// DARK_SKY_BRIGHTNESS), changing the page only when that flips
+const DarkSkyMarker = memo(function DarkSkyMarker({ exposure }) {
+  const sky = useStore(skyStore);
+  const dark = sky
+    ? topSkyBrightness({ colors: sky.colors, exposure, sunElevation: sky.sun.elevation }) < DARK_SKY_BRIGHTNESS
+    : false;
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark-sky', dark);
+  }, [dark]);
+  return null;
 });
 
 // Names of the moon's phases, by where its phase (0–1) is nearest
@@ -821,6 +858,36 @@ function SunEvent({ event, children }) {
   );
 }
 
+// The next moonrise or moonset from `events` (see
+// TimeOfDayManager.GetMoonEvents), checked again as each one passes
+function useNextEvent(events) {
+  const [now, setNow] = useState(() => Date.now());
+  const next = (events || []).find(({ time }) => Date.parse(time) > now);
+  useEffect(() => {
+    if (!next) return undefined;
+    const timer = setTimeout(() => setNow(Date.now()), Math.max(0, Date.parse(next.time) - Date.now()) + 1000);
+    return () => clearTimeout(timer);
+  }, [next && next.time]);
+  // New events are checked against the time now
+  useEffect(() => setNow(Date.now()), [events]);
+  return next;
+}
+
+// The next moonrise or moonset, like the sun events: its icon (the size of
+// the weather details' icons) with its time under it (the size of the
+// astronomical dawn and dusk times)
+function MoonEvent({ moonEvents }) {
+  const event = useNextEvent(moonEvents && moonEvents.events);
+  if (!event) return null;
+  const name = event.type === 'moonrise' ? 'Moonrise' : 'Moonset';
+  return (
+    <div className="moon-event" title={name}>
+      <img className={`moon-event-icon ${iconClass(event.type)}`} src={whiteIconUrl(event.type)} alt={name} />
+      <div className="moon-event-time">{displayTimeFormat.format(new Date(event.time)).toLowerCase()}</div>
+    </div>
+  );
+}
+
 // The forecast from now until the next sun event: the high over the low like
 // a fraction, a bar, then the kind of precipitation's icon beside its chance, with
 // the amount under both, right-aligned
@@ -869,12 +936,31 @@ function sunEventsAround(sunTimes, now) {
   return { last: events[next - 1], next: events[next] };
 }
 
-const WeatherDisplay = memo(function WeatherDisplay({ weather, pollen, sunTimes, forecast }) {
+// Whether it's night: between sunset and sunrise, by the sun times, checked
+// again at each sunrise and sunset. Before the sun times load, it's the
+// weather's own day or night flag.
+function useNight(sunTimes, weather) {
+  const [now, setNow] = useState(() => new Date());
+  const { last, next } = sunEventsAround(sunTimes, now);
+  useEffect(() => {
+    if (!next) return undefined;
+    // (a moment after the event, so it counts as passed)
+    const timer = setTimeout(() => setNow(new Date()), Math.max(0, Date.parse(next.time) - Date.now()) + 1000);
+    return () => clearTimeout(timer);
+  }, [next && next.time]);
+  // New sun times are checked against the time now
+  useEffect(() => setNow(new Date()), [sunTimes]);
+  if (last) return last.type === 'sunset';
+  if (next) return next.type === 'sunrise';
+  return weather?.current?.is_day === 0;
+}
+
+const WeatherDisplay = memo(function WeatherDisplay({ weather, pollen, sunTimes, moonEvents, forecast }) {
   const current = weather?.current;
   const code = current ? WEATHER_CODES.get(current.weather_code) : undefined;
-  const night = current?.is_day === 0;
+  const night = useNight(sunTimes, weather);
   const icon = (night && code?.nightIcon) || code?.icon || UNKNOWN_ICON;
-  const clearNight = night && current.weather_code === CLEAR_CODE;
+  const clearNight = night && current?.weather_code === CLEAR_CODE;
   const condition = code?.name ?? (current ? `Weather code ${current.weather_code}` : MISSING);
   const aqi = typeof current?.us_aqi === 'number' ? Math.round(current.us_aqi) : null;
   return (
@@ -902,16 +988,24 @@ const WeatherDisplay = memo(function WeatherDisplay({ weather, pollen, sunTimes,
         }}
       </DateAndTime>
       <div className="weather-condition">{condition}</div>
+      {/* The temperature's number centered on the screen, with the moon
+          event and weather icon to its left and the rest to its right */}
       <div className="weather-now">
-        {clearNight ? <ClearNightIcon /> : <WeatherIcon icon={icon} />}
-        {/* The temperature, then humidity and wind centered beside it */}
+        <div className="weather-now-left">
+          <MoonEvent moonEvents={moonEvents} />
+          {clearNight ? <ClearNightIcon /> : <WeatherIcon icon={icon} />}
+        </div>
         <div className="weather-temperature">
           <span className="temperature-value" title="Feels like">
             {wholeFahrenheit(weather, 'apparent_temperature')}
           </span>
-          <img className={`temperature-unit ${iconClass('fahrenheit')}`} src={whiteIconUrl('fahrenheit')} alt="°F" />
-          <HumidityAndWind weather={weather} />
+          {/* The unit, then humidity and wind beside it */}
+          <div className="weather-temperature-side">
+            <img className={`temperature-unit ${iconClass('fahrenheit')}`} src={whiteIconUrl('fahrenheit')} alt="°F" />
+            <HumidityAndWind weather={weather} />
+          </div>
         </div>
+        <div className="weather-now-right" />
       </div>
       <div className="weather-details">
         <UvIcon uvIndex={current?.uv_index} />
@@ -977,6 +1071,13 @@ const SunTimesTable = memo(function SunTimesTable({ sunTimes }) {
 });
 
 // A number input on its own row, with its label
+// A slider, marking how far along it is (--fill) so its track can show the
+// filled part (see index.css)
+function RangeInput({ min = 0, max = 100, value, ...props }) {
+  const fill = (100 * (Number(value) - Number(min))) / (Number(max) - Number(min) || 1);
+  return <input type="range" min={min} max={max} value={value} style={{ '--fill': `${fill}%` }} {...props} />;
+}
+
 function NumberRow({ label, value, onChange, min = 0, max, unit }) {
   return (
     <div className="setting-row">
@@ -1001,6 +1102,8 @@ export default function App() {
   const [weatherError, setWeatherError] = useState(null);
   const [loading, setLoading] = useState(false);
   const [sunTimes, setSunTimes] = useState(null);
+  // The next two days' moonrises and moonsets (see server/TimeOfDayManager.js)
+  const [moonEvents, setMoonEvents] = useState(null);
   // Today's pollen levels, from pollen.com (see server/PollenManager.js)
   const [pollen, setPollen] = useState(null);
   // The forecast for the next two days (see server/ForecastManager.js)
@@ -1028,9 +1131,13 @@ export default function App() {
   // Cloud cover set with the sliders, or null to use the current weather, and
   // what the sliders show until applied
   const [cloudOverride, setCloudOverride] = useState(null);
+  // Rain and snow set in Settings, or null to follow the weather
+  const [precipitationOverride, setPrecipitationOverride] = useState(null);
   const [cloudInputs, setCloudInputs] = useState(NO_CLOUDS);
   // Whether the settings are showing, in place of the weather display
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // Whether everything but the sky and the eye and bedtime buttons is hidden
+  const [uiHidden, setUiHidden] = useState(false);
   // Bedtime: the screen is off (on the kiosk) and the page is covered in
   // black, with the per-second sky updates and cloud motion paused, until a
   // tap or sunrise wakes it. Weather updates carry on.
@@ -1052,6 +1159,8 @@ export default function App() {
   const [hazeContrastError, setHazeContrastError] = useState(null);
   // The moon's settings, and what's in their inputs until applied
   const [moon, setMoon] = useState(DEFAULT_MOON);
+  // The stars' settings, which sliders change straight away
+  const [stars, setStars] = useState(DEFAULT_STARS);
   const [moonInputs, setMoonInputs] = useState(() =>
     Object.fromEntries(Object.entries(DEFAULT_MOON).map(([name, value]) => [name, String(value)])),
   );
@@ -1076,6 +1185,8 @@ export default function App() {
 
   const weatherClouds = useMemo(() => (weather ? cloudsFromWeather(weather.current) : NO_CLOUDS), [weather]);
   const clouds = cloudOverride ?? weatherClouds;
+  const weatherPrecipitation = useMemo(() => precipitationFromWeather(weather && weather.current), [weather]);
+  const precipitation = precipitationOverride || weatherPrecipitation;
 
   // The sliders follow the weather until they're applied
   useEffect(() => {
@@ -1119,6 +1230,13 @@ export default function App() {
       setSunTimes(await fetchJson('/api/time-of-day/sun-times'));
     } catch (err) {
       setSunError(err.message);
+    }
+    // Moonrise and moonset are worked out on the server, so they load with
+    // the sun times; a failure just leaves them out
+    try {
+      setMoonEvents(await fetchJson('/api/time-of-day/moon-events'));
+    } catch (err) {
+      console.warn('Moon events unavailable:', err.message);
     }
   }
 
@@ -1259,6 +1377,8 @@ export default function App() {
 
   function goToSleep() {
     asleepSince.current = Date.now();
+    // Everything shows again on waking
+    setUiHidden(false);
     setAsleep(true);
     setScreenPower(false);
   }
@@ -1358,6 +1478,7 @@ export default function App() {
 
   return (
     <>
+      <DarkSkyMarker exposure={exposure} />
       <LiveSkyCanvas
         cloudLighting={cloudLighting}
         cloudGlow={cloudGlow}
@@ -1366,26 +1487,46 @@ export default function App() {
         cloudBrightness={cloudBrightness}
         hazeContrast={hazeContrast}
         moon={moon}
+        stars={stars}
         cloudSpeed={cloudSpeed}
         paused={asleep}
+        precipitation={precipitation}
       />
+      {!uiHidden && (
+        <button
+          type="button"
+          className="corner-button symbol-button content-toggle"
+          onClick={() => setSettingsOpen(!settingsOpen)}
+          title={settingsOpen ? 'Back' : 'Settings'}
+        >
+          {settingsOpen ? '\u2190' : '\u2699'}
+        </button>
+      )}
+      {/* Hides everything else but bedtime, leaving just the sky; crossed out while hidden */}
       <button
         type="button"
-        className="corner-button content-toggle"
-        onClick={() => setSettingsOpen(!settingsOpen)}
+        className={`corner-button symbol-button visibility-toggle${uiHidden ? ' crossed-out' : ''}`}
+        onClick={() => setUiHidden(!uiHidden)}
+        title={uiHidden ? 'Show everything' : 'Show just the sky'}
       >
-        {settingsOpen ? 'Back' : 'Settings'}
+        {'\u{1F441}'}
       </button>
       <button type="button" className="corner-button bedtime-toggle" onClick={goToSleep} title="Bedtime">
-        <img className={iconClass('starry-night')} src={whiteIconUrl('starry-night')} alt="Bedtime: turn the screen off" />
+        <img className={iconClass('bedtime-mode')} src={whiteIconUrl('bedtime-mode')} alt="Bedtime: turn the screen off" />
       </button>
       {/* In bedtime, covers everything, so the tap that wakes the page doesn't
           also press what's under it */}
       {asleep && <div className="bedtime-overlay" onClick={wake} />}
-      {!settingsOpen && (
-        <WeatherDisplay weather={weather} pollen={pollen} sunTimes={sunTimes} forecast={forecast} />
+      {!settingsOpen && !uiHidden && (
+        <WeatherDisplay
+          weather={weather}
+          pollen={pollen}
+          sunTimes={sunTimes}
+          moonEvents={moonEvents}
+          forecast={forecast}
+        />
       )}
-      <main className="app" style={{ display: settingsOpen ? undefined : 'none' }}>
+      <main className="app" style={{ display: settingsOpen && !uiHidden ? undefined : 'none' }}>
         {weather && <WeatherTable weather={weather} />}
         {weatherError && <p>Weather error: {weatherError}</p>}
         {sunTimes && <SunTimesTable sunTimes={sunTimes} />}
@@ -1442,8 +1583,7 @@ export default function App() {
             {CLOUD_SLIDERS.map(({ name, label }) => (
               <label key={name} className="cloud-cover-row">
                 <span>{label}</span>
-                <input
-                  type="range"
+                <RangeInput
                   min="0"
                   max="100"
                   step="1"
@@ -1475,8 +1615,7 @@ export default function App() {
           <p>
             <label>
               Cloud speed:{' '}
-              <input
-                type="range"
+              <RangeInput
                 min="0"
                 max={MAX_CLOUD_SPEED}
                 step="0.1"
@@ -1486,6 +1625,31 @@ export default function App() {
               {cloudSpeed.toFixed(1)}×
             </label>
             <CloudMotionNote />
+          </p>
+        </div>
+        <div className="cloud-cover">
+          <h3>Precipitation</h3>
+          <div className="cloud-cover-sliders">
+            {PRECIPITATION_SLIDERS.map(({ name, label }) => (
+              <label key={name} className="cloud-cover-row">
+                <span>{label}</span>
+                <RangeInput
+                  min="0"
+                  max="100"
+                  step="1"
+                  value={precipitation[name]}
+                  onChange={(event) =>
+                    setPrecipitationOverride({ ...precipitation, [name]: Number(event.target.value) })
+                  }
+                />
+                <span>{precipitation[name]}%</span>
+              </label>
+            ))}
+          </div>
+          <p>
+            <button type="button" onClick={() => setPrecipitationOverride(null)} disabled={!precipitationOverride}>
+              Now
+            </button>
           </p>
         </div>
         <SkyInfo />
@@ -1587,6 +1751,23 @@ export default function App() {
             </button>
           </div>
           {moonError && <p>Moon error: {moonError}</p>}
+
+          <h3>Stars</h3>
+          {Object.entries(STAR_FIELDS).map(([name, label]) => (
+            <div className="setting-row" key={name}>
+              <label>
+                {label}:{' '}
+                <RangeInput
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  value={stars[name]}
+                  onChange={(event) => setStars({ ...stars, [name]: Number(event.target.value) })}
+                />{' '}
+                {stars[name].toFixed(2)}
+              </label>
+            </div>
+          ))}
 
           <h3>Cloud Lighting</h3>
           <div className="setting-row">

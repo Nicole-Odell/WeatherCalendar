@@ -5,6 +5,16 @@ body,
   height: 100%;
 }
 
+/* The page still scrolls (wheel, or tap and drag), with no scroll bar:
+   scrollbar-width for Firefox, ::-webkit-scrollbar for Chromium (74 too) */
+html {
+  scrollbar-width: none;
+}
+
+::-webkit-scrollbar {
+  display: none;
+}
+
 :root {
   /* All text is white, with a soft shadow so it reads over any sky */
   --text-shadow: 0 0 0.36em rgba(0, 0, 0, 0.8);
@@ -13,6 +23,13 @@ body,
      weather icon, and a tighter one for small icons beside values */
   --icon-shadow-large: drop-shadow(0 0 0.36rem rgba(0, 0, 0, 0.8));
   --icon-shadow-small: drop-shadow(0 0 0.2rem rgba(0, 0, 0, 0.8));
+  /* Controls' outline: a dark shadow, or a white glow once the top of the
+     sky is dark (.dark-sky, set by the page) */
+  --control-shadow: 0 0 4px rgba(0, 0, 0, 0.45);
+}
+
+:root.dark-sky {
+  --control-shadow: 0 0 4px rgba(255, 255, 255, 0.9);
 }
 
 body {
@@ -43,12 +60,97 @@ body {
   margin-bottom: calc(var(--icon-base-bottom, 0px) + var(--icon-margin-bottom, 0em));
 }
 
-/* Form controls keep their own look: dark text in a light box */
+/*
+ * Controls look like the rest of the page: white text with the text shadow,
+ * on no background, outlined by a soft shadow (--control-shadow) that's dark,
+ * or a white glow once the top of the sky is dark (.dark-sky)
+ */
 input,
 select,
 textarea,
 button {
-  text-shadow: none;
+  border: 2px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  box-shadow: var(--control-shadow);
+  color: white;
+  text-shadow: var(--text-shadow);
+  font-family: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+::placeholder {
+  color: rgba(255, 255, 255, 0.6);
+}
+
+/* The dropdown list is drawn by the browser, so it gets a dark background */
+option {
+  background: #222;
+  color: white;
+}
+
+/* The browser's own decorations in controls (number spinners, the time's
+   picker and clear buttons), turned white with the shadow */
+::-webkit-inner-spin-button,
+::-webkit-calendar-picker-indicator,
+::-webkit-clear-button {
+  filter: invert(1) var(--icon-shadow-small);
+}
+
+/* Sliders: the filled part (up to --fill, set by the page) is white with the
+   shadow, and the rest just the shadow outline */
+input[type='range'] {
+  -webkit-appearance: none;
+  height: 16px;
+  border: none;
+  box-shadow: none;
+}
+
+input[type='range']::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(to right, white var(--fill, 0%), transparent var(--fill, 0%));
+  box-shadow: var(--control-shadow);
+}
+
+input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  border-radius: 50%;
+  background: white;
+  box-shadow: var(--control-shadow);
+}
+
+input[type='range']::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background: transparent;
+  box-shadow: var(--control-shadow);
+}
+
+input[type='range']::-moz-range-progress {
+  height: 4px;
+  border-radius: 2px;
+  background: white;
+}
+
+input[type='range']::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: none;
+  border-radius: 50%;
+  background: white;
+  box-shadow: var(--control-shadow);
 }
 
 .app {
@@ -69,39 +171,81 @@ a {
   color: inherit;
 }
 
-/* Buttons in the top corners: just their content and a soft shadow outline */
+/* Buttons in the top corners (styled like every control, see above) */
 .corner-button {
   position: fixed;
   top: 12px;
   z-index: 1;
-  border: 2px solid transparent;
-  border-radius: 3px;
-  background: transparent;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
-  color: white;
-  text-shadow: var(--text-shadow);
-  cursor: pointer;
 }
 
-/* Settings / Back, top left: the same size as the page's other buttons, which
-   use the browser's defaults */
-.content-toggle {
+/* The corner buttons are squares about the size of the temperature's °F,
+   with their symbol or icon centered (overflowing evenly when larger) */
+.corner-button {
+  width: var(--corner-button-size);
+  height: var(--corner-button-size);
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+:root {
+  --corner-button-size: 6vw;
+  /* The space between the buttons side by side on the left */
+  --corner-button-gap: 2vw;
+}
+
+/* Settings (a gear) and show or hide everything (an eye), top left, in
+   one-color fonts' symbols, sized to look as big as the bedtime icon */
+.symbol-button {
   left: 12px;
-  padding: 1px 6px;
+  font-family: 'DejaVu Sans', 'Noto Sans Symbols', 'Noto Sans Symbols2', sans-serif;
+  font-size: 3.5vw;
+  line-height: 1;
 }
 
-/* Bedtime, top right: a square about the size of the temperature's °F */
+/* (to the right of Settings, or in its place while everything is hidden;
+   a little smaller than the gear, to look the same size) */
+.visibility-toggle {
+  left: calc(12px + var(--corner-button-size) + var(--corner-button-gap));
+  font-size: 3.15vw;
+}
+
+.visibility-toggle.crossed-out {
+  left: 12px;
+}
+
+/* While everything is hidden, a slash across the eye */
+.visibility-toggle.crossed-out::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 57.5%;
+  height: 0.25vw;
+  margin-left: -28.75%;
+  margin-top: -0.125vw;
+  border-radius: 0.125vw;
+  background: white;
+  box-shadow: var(--control-shadow);
+  transform: rotate(-45deg);
+}
+
+/* Bedtime, top right, its icon 25% bigger than the button */
 .bedtime-toggle {
   right: 12px;
-  width: 6vw;
-  height: 6vw;
-  padding: 0;
 }
 
 .bedtime-toggle img {
-  display: block;
-  width: 100%;
-  height: 100%;
+  /* Centered by position, since the Pi 3's Chromium 74 doesn't lay out
+     buttons' content with flex (its margins only space it beside text) */
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 125%;
+  height: 125%;
+  margin: 0;
+  transform: translate(-50%, -50%);
   filter: var(--icon-shadow-small);
 }
 
@@ -288,10 +432,6 @@ a {
   filter: var(--icon-shadow-small);
 }
 
-/* The starry-night icon's margins as the clear night weather icon (icons.css
-   has them for the smaller bedtime button) */
-.weather-icon.icon-starry-night { --icon-margin: -0.41em; --icon-margin-top: -0.44em; --icon-margin-bottom: -0.46em; }
-
 /* The snowflake's margins at the forecast's size (icons.css sizes it for the
    larger weather icon), and drizzle: smoke-particles upside down, at the
    forecast's size (measured the same way: meeting the drawing's edges, plus
@@ -320,6 +460,7 @@ a {
    forecast's high and low */
 .sun-event-twilight {
   font-size: 0.5em;
+  opacity: 0.75;
 }
 
 .sun-event-icon {
@@ -338,9 +479,28 @@ a {
   font-size: 12vw;
 }
 
-/* Spacing with margins, as Chromium 74 (on the Pi 3) has no gap in flex layouts */
-.weather-now > * + * {
-  margin-left: 0vw;
+/* The next moonrise or moonset, left of the weather icon and centered on it:
+   its icon the size of the weather details' icons (as the wind's), and its
+   time the size of the astronomical dawn and dusk times */
+.moon-event {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  font-size: 4vw;
+  /* The weather icon's own margins space it from the moon event as from the
+     number; this matches the blank space before the number's first digit
+     (about 1vw, measured on the Pi 3), so the two gaps look the same */
+  margin-right: 0vw;
+}
+
+.moon-event-icon {
+  width: 1.5em;
+  height: 1.5em;
+  filter: var(--icon-shadow-small);
+}
+
+.moon-event-time {
+  font-size: 0.5em;
 }
 
 .weather-icon {
@@ -349,9 +509,37 @@ a {
   filter: var(--icon-shadow-large);
 }
 
-.weather-temperature {
+/* The row's sides share the room either side of the temperature's number
+   equally, so the number stays centered: the moon event and weather icon at
+   the right of the left side, and the right side left empty for what's
+   beside the number (see .weather-temperature-side) */
+.weather-now-left,
+.weather-now-right {
+  flex: 1 1 0;
+}
+
+.weather-now-left {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+}
+
+/* Just the number, so it's what's centered and sets the height humidity
+   and wind stretch to */
+.weather-temperature {
+  position: relative;
+}
+
+/* The unit, humidity and wind, out of the layout just right of the number,
+   as tall as it */
+.weather-temperature-side {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 100%;
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
 }
 
 /* Humidity and wind, to the right of the temperature, one under the other:

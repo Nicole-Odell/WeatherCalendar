@@ -1,5 +1,6 @@
 import { createCloudRenderer } from './cloudsGL.js';
 import { createCpuCloudRenderer } from './cpuClouds.js';
+import { PRECIPITATION_INTERVAL, PRECIPITATION_SCALE, createPrecipitation } from './precipitation.js';
 import moonUrl from '../assets/images/moon.png';
 import {
   cloudShaderData,
@@ -56,6 +57,8 @@ const CPU_RECOLOR_STEP = 1;
  * 2. `clouds`: the cloud layers, drawn with WebGL if the GPU is fast enough,
  *    otherwise on the CPU (see cpuClouds.js)
  * 3. `haze`: the haze, a column 1 pixel wide that the page stretches
+ * 4. `precipitation`: rain and snow, moving particles drawn every
+ *    PRECIPITATION_INTERVAL ms while there's any (see precipitation.js)
  * `createCanvas()` makes an off-screen canvas for drawing the sky and stars
  * into. `report(message)` passes back { status } (renderer and timings).
  * `forceCpuClouds` draws the clouds on the CPU even if WebGL is fast enough.
@@ -124,6 +127,11 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
     animating: false,
     animationTimer: 0,
     animationFrame: 0,
+    // Rain and snow, and the timer drawing them while there's any (and the
+    // time it last drew, in ms)
+    precipitation: createPrecipitation(canvases.precipitation),
+    precipitationTimer: 0,
+    precipitationDrawn: 0,
     // The latest scene: settings, windowSize and fadeDuration
     props: null,
   };
@@ -199,6 +207,33 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
       clearInterval(state.animationTimer);
       state.animationTimer = 0;
     }
+  }
+
+  // Starts or stops drawing rain and snow, which runs while there's any and
+  // it isn't paused
+  function updatePrecipitation() {
+    const { precipitation } = state;
+    const { fullWidth, fullHeight } = sizes();
+    precipitation.setScene(
+      state.props.settings.precipitation || {},
+      Math.max(1, Math.round(fullWidth * PRECIPITATION_SCALE)),
+      Math.max(1, Math.round(fullHeight * PRECIPITATION_SCALE)),
+    );
+    const run = precipitation.active() && !state.paused;
+    if (run && !state.precipitationTimer) {
+      state.precipitationDrawn = performance.now();
+      state.precipitationTimer = setInterval(() => {
+        const now = performance.now();
+        // (at most a quarter second at once, so a long stall doesn't jump)
+        precipitation.frame(Math.min(0.25, (now - state.precipitationDrawn) / 1000));
+        state.precipitationDrawn = now;
+      }, PRECIPITATION_INTERVAL);
+    } else if (!run && state.precipitationTimer) {
+      clearInterval(state.precipitationTimer);
+      state.precipitationTimer = 0;
+    }
+    // With none left, clears what was drawn
+    if (!precipitation.active()) precipitation.frame(0);
   }
 
   // Moves the clouds on: with WebGL, a new frame faded in over `duration` ms
@@ -292,14 +327,21 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
     const glowContext = glow.getContext('2d');
     const glowImage = glowContext.createImageData(glow.width, glow.height);
     renderStarGlow(glowImage.data, glow.width, glow.height, settings);
-    if (!resized && sameValues(colors, stars.colors) && sameValues(glowImage.data, stars.glow)) {
+    const sizing = JSON.stringify(settings.stars);
+    if (
+      !resized &&
+      sizing === stars.sizing &&
+      sameValues(colors, stars.colors) &&
+      sameValues(glowImage.data, stars.glow)
+    ) {
       return false;
     }
     context.clearRect(0, 0, fullWidth, fullHeight);
     glowContext.putImageData(glowImage, 0, 0);
     context.drawImage(glow, 0, 0, fullWidth, fullHeight);
-    drawStars(context, fullWidth, fullHeight, colors, Math.max(1, Math.round(state.props.windowSize.pixelRatio)));
+    drawStars(context, fullWidth, fullHeight, colors, Math.max(1, Math.round(state.props.windowSize.pixelRatio)), settings);
     stars.colors = colors;
+    stars.sizing = sizing;
     stars.glow = glowImage.data;
     stars.changed = true;
     return true;
@@ -421,6 +463,7 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
 
     const cloudsRedrawn = drawClouds(settings, cloudShaderData(settings, cloudHeight, rows), rows, fadeDuration);
     updateAnimation();
+    updatePrecipitation();
     startPainting();
     const done = performance.now();
 
@@ -465,12 +508,16 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
     setPaused(paused) {
       cloudTime();
       state.paused = paused;
-      if (state.props) updateAnimation();
+      if (state.props) {
+        updateAnimation();
+        updatePrecipitation();
+      }
     },
 
     dispose() {
       cancelFrame(state.animationFrame);
       clearInterval(state.animationTimer);
+      clearInterval(state.precipitationTimer);
     },
   };
 }

@@ -104,6 +104,12 @@ app.get('/api/time-of-day/sun-times', async (req, res) => {
   }
 });
 
+// The moonrises and moonsets in the next two days (see
+// TimeOfDayManager.GetMoonEvents)
+app.get('/api/time-of-day/moon-events', (req, res) => {
+  res.json({ events: TimeOfDayManager.GetMoonEvents() });
+});
+
 // How often the sky stream sends the sky colors (ms)
 const SKY_STREAM_INTERVAL = 1000;
 

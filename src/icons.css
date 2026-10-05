@@ -5,96 +5,572 @@
  * pull its empty edges in so it sits snugly against text. Set in Settings >
  * Icon Spacing, which shows each icon between text and makes this file.
  */
-.icon-clear-day { --icon-margin: -0.05em; --icon-margin-top: -0.03em; --icon-margin-bottom: -0.03em; }
-.icon-clear-night { --icon-margin: -0.31em; --icon-margin-top: -0.29em; --icon-margin-bottom: -0.29em; }
-.icon-mostly-clear-day { --icon-margin: -0.22em; --icon-margin-top: -0.25em; --icon-margin-bottom: -0.31em; }
-.icon-mostly-clear-night { --icon-margin: -0.34em; --icon-margin-top: -0.45em; --icon-margin-bottom: -0.4em; }
-.icon-partly-cloudy-day { --icon-margin: -0.13em; --icon-margin-top: -0.25em; --icon-margin-bottom: -0.4em; }
-.icon-partly-cloudy-night { --icon-margin: -0.18em; --icon-margin-top: -0.32em; --icon-margin-bottom: -0.4em; }
-.icon-overcast { --icon-margin: -0.15em; --icon-margin-top: -0.4em; --icon-margin-bottom: -0.4em; }
-.icon-fog-day { --icon-margin: -0.3em; --icon-margin-top: -0.4em; --icon-margin-bottom: -0.15em; }
-.icon-fog-night { --icon-margin: -0.42em; --icon-margin-top: -0.41em; --icon-margin-bottom: -0.39em; }
-.icon-extreme-fog { --icon-margin: -0.15em; --icon-margin-top: -0.4em; --icon-margin-bottom: -0.17em; }
-.icon-partly-cloudy-day-drizzle { --icon-margin: -0.13em; --icon-margin-top: -0.25em; --icon-margin-bottom: -0.25em; }
-.icon-partly-cloudy-night-drizzle { --icon-margin: -0.18em; --icon-margin-top: -0.32em; --icon-margin-bottom: -0.25em; }
-.icon-drizzle { --icon-margin: -0.18em; --icon-margin-top: -0.4em; --icon-margin-bottom: -0.25em; }
-.icon-extreme-drizzle { --icon-margin: -0.15em; --icon-margin-top: -0.4em; --icon-margin-bottom: -0.25em; }
-.icon-sleet { --icon-margin: -0.18em; --icon-margin-top: -0.4em; --icon-margin-bottom: -0.06em; }
-.icon-partly-cloudy-day-rain { --icon-margin: -0.13em; --icon-margin-top: -0.25em; --icon-margin-bottom: -0.17em; }
-.icon-partly-cloudy-night-rain { --icon-margin: -0.18em; --icon-margin-top: -0.32em; --icon-margin-bottom: -0.17em; }
-.icon-rain { --icon-margin: -0.18em; --icon-margin-top: -0.4em; --icon-margin-bottom: -0.17em; }
-.icon-extreme-rain { --icon-margin: -0.15em; --icon-margin-top: -0.4em; --icon-margin-bottom: -0.17em; }
-.icon-extreme-sleet { --icon-margin: -0.15em; --icon-margin-top: -0.4em; --icon-margin-bottom: -0.06em; }
-.icon-partly-cloudy-day-snow { --icon-margin: -0.13em; --icon-margin-top: -0.25em; --icon-margin-bottom: -0.19em; }
-.icon-partly-cloudy-night-snow { --icon-margin: -0.18em; --icon-margin-top: -0.32em; --icon-margin-bottom: -0.19em; }
-.icon-snow { --icon-margin: -0.18em; --icon-margin-top: -0.4em; --icon-margin-bottom: -0.19em; }
-.icon-extreme-snow { --icon-margin: -0.15em; --icon-margin-top: -0.4em; --icon-margin-bottom: -0.19em; }
-.icon-hail { --icon-margin: 0em; --icon-margin-top: 0em; --icon-margin-bottom: 0em; }
-.icon-overcast-rain { --icon-margin: -0.15em; --icon-margin-top: -0.4em; --icon-margin-bottom: -0.17em; }
-.icon-overcast-snow { --icon-margin: -0.15em; --icon-margin-top: -0.4em; --icon-margin-bottom: -0.19em; }
-.icon-thunderstorms-day-rain { --icon-margin: -0.13em; --icon-margin-top: -0.25em; --icon-margin-bottom: -0.09em; }
-.icon-thunderstorms-night-rain { --icon-margin: -0.18em; --icon-margin-top: -0.32em; --icon-margin-bottom: -0.09em; }
-.icon-thunderstorms-hail { --icon-margin: -0.18em; --icon-margin-top: -0.4em; --icon-margin-bottom: -0.09em; }
-.icon-thunderstorms-extreme-day-rain { --icon-margin: -0.1em; --icon-margin-top: -0.25em; --icon-margin-bottom: -0.09em; }
-.icon-thunderstorms-extreme-night-rain { --icon-margin: -0.15em; --icon-margin-top: -0.32em; --icon-margin-bottom: -0.09em; }
-.icon-thunderstorms-extreme-hail { --icon-margin: -0.15em; --icon-margin-top: -0.4em; --icon-margin-bottom: -0.09em; }
-.icon-not-available { --icon-margin: -0.3em; --icon-margin-top: -0.6em; --icon-margin-bottom: -0.59em; }
-.icon-moon-new { --icon-margin: -0.3em; --icon-margin-top: -0.3em; --icon-margin-bottom: -0.3em; }
-.icon-moon-waxing-crescent { --icon-margin: -0.3em; --icon-margin-top: -0.3em; --icon-margin-bottom: -0.3em; }
-.icon-moon-first-quarter { --icon-margin: -0.3em; --icon-margin-top: -0.3em; --icon-margin-bottom: -0.3em; }
-.icon-moon-waxing-gibbous { --icon-margin: -0.3em; --icon-margin-top: -0.3em; --icon-margin-bottom: -0.3em; }
-.icon-moon-full { --icon-margin: -0.31em; --icon-margin-top: -0.31em; --icon-margin-bottom: -0.31em; }
-.icon-moon-waning-gibbous { --icon-margin: -0.3em; --icon-margin-top: -0.3em; --icon-margin-bottom: -0.3em; }
-.icon-moon-last-quarter { --icon-margin: -0.3em; --icon-margin-top: -0.3em; --icon-margin-bottom: -0.3em; }
-.icon-moon-waning-crescent { --icon-margin: -0.3em; --icon-margin-top: -0.3em; --icon-margin-bottom: -0.3em; }
-.icon-starry-night { --icon-margin: -0.45em; --icon-margin-top: -0.45em; --icon-margin-bottom: -0.45em; }
-.icon-barometer-low { --icon-margin: -0.07em; --icon-margin-top: -0.07em; --icon-margin-bottom: -0.07em; }
-.icon-barometer-moderate { --icon-margin: -0.07em; --icon-margin-top: -0.07em; --icon-margin-bottom: -0.07em; }
-.icon-barometer-high { --icon-margin: -0.07em; --icon-margin-top: -0.07em; --icon-margin-bottom: -0.07em; }
-.icon-barometer-very-high { --icon-margin: -0.07em; --icon-margin-top: -0.07em; --icon-margin-bottom: -0.07em; }
-.icon-barometer-extreme { --icon-margin: -0.07em; --icon-margin-top: -0.07em; --icon-margin-bottom: -0.07em; }
-.icon-uv-index-1 { --icon-margin: 0.01em; --icon-margin-top: 0.03em; --icon-margin-bottom: 0.03em; }
-.icon-uv-index-2 { --icon-margin: 0.01em; --icon-margin-top: 0.03em; --icon-margin-bottom: 0.03em; }
-.icon-uv-index-3 { --icon-margin: 0.01em; --icon-margin-top: 0.03em; --icon-margin-bottom: 0.03em; }
-.icon-uv-index-4 { --icon-margin: 0.01em; --icon-margin-top: 0.03em; --icon-margin-bottom: 0.03em; }
-.icon-uv-index-5 { --icon-margin: 0.01em; --icon-margin-top: 0.03em; --icon-margin-bottom: 0.03em; }
-.icon-uv-index-6 { --icon-margin: 0.01em; --icon-margin-top: 0.03em; --icon-margin-bottom: 0.03em; }
-.icon-uv-index-7 { --icon-margin: 0.01em; --icon-margin-top: 0.03em; --icon-margin-bottom: 0.03em; }
-.icon-uv-index-8 { --icon-margin: 0.01em; --icon-margin-top: 0.03em; --icon-margin-bottom: 0.03em; }
-.icon-uv-index-9 { --icon-margin: 0.01em; --icon-margin-top: 0.03em; --icon-margin-bottom: 0.03em; }
-.icon-uv-index-10 { --icon-margin: 0.01em; --icon-margin-top: 0.03em; --icon-margin-bottom: 0.03em; }
-.icon-uv-index-11 { --icon-margin: 0.01em; --icon-margin-top: 0.03em; --icon-margin-bottom: 0.03em; }
-.icon-uv-index-11-plus { --icon-margin: 0.06em; --icon-margin-top: 0.03em; --icon-margin-bottom: 0.03em; }
-.icon-pollen-grass-low { --icon-margin: -0.17em; --icon-margin-top: -0.2em; --icon-margin-bottom: -0.1em; }
-.icon-pollen-grass-moderate { --icon-margin: -0.17em; --icon-margin-top: -0.2em; --icon-margin-bottom: -0.1em; }
-.icon-pollen-grass-high { --icon-margin: -0.17em; --icon-margin-top: -0.2em; --icon-margin-bottom: -0.1em; }
-.icon-pollen-grass-very-high { --icon-margin: -0.17em; --icon-margin-top: -0.2em; --icon-margin-bottom: -0.1em; }
-.icon-pollen-tree-low { --icon-margin: -0.17em; --icon-margin-top: -0.18em; --icon-margin-bottom: -0.08em; }
-.icon-pollen-tree-moderate { --icon-margin: -0.17em; --icon-margin-top: -0.18em; --icon-margin-bottom: -0.08em; }
-.icon-pollen-tree-high { --icon-margin: -0.17em; --icon-margin-top: -0.18em; --icon-margin-bottom: -0.08em; }
-.icon-pollen-tree-very-high { --icon-margin: -0.17em; --icon-margin-top: -0.18em; --icon-margin-bottom: -0.08em; }
-.icon-pollen-weed-low { --icon-margin: -0.17em; --icon-margin-top: -0.2em; --icon-margin-bottom: -0.1em; }
-.icon-pollen-weed-moderate { --icon-margin: -0.17em; --icon-margin-top: -0.2em; --icon-margin-bottom: -0.1em; }
-.icon-pollen-weed-high { --icon-margin: -0.17em; --icon-margin-top: -0.2em; --icon-margin-bottom: -0.1em; }
-.icon-pollen-weed-very-high { --icon-margin: -0.17em; --icon-margin-top: -0.2em; --icon-margin-bottom: -0.1em; }
-.icon-fahrenheit { --icon-margin: -0.5em; --icon-margin-top: -0.52em; --icon-margin-bottom: -0.52em; }
-.icon-sunrise { --icon-margin: -0.05em; --icon-margin-top: -0.38em; --icon-margin-bottom: -0.3em; }
-.icon-sunset { --icon-margin: -0.05em; --icon-margin-top: -0.38em; --icon-margin-bottom: -0.3em; }
-.icon-raindrop { --icon-margin: -0.32em; --icon-margin-top: -0.21em; --icon-margin-bottom: -0.2em; }
-.icon-raindrops { --icon-margin: -0.2em; --icon-margin-top: -0.21em; --icon-margin-bottom: -0.2em; }
-.icon-snowflake { --icon-margin: -0.39em; --icon-margin-top: -0.32em; --icon-margin-bottom: -0.32em; }
-.icon-smoke-particles { --icon-margin: -0.47em; --icon-margin-top: -0.43em; --icon-margin-bottom: -0.43em; }
-.icon-wind-beaufort-0 { --icon-margin: -0.05em; --icon-margin-top: -0.23em; --icon-margin-bottom: -0.23em; }
-.icon-wind-beaufort-1 { --icon-margin: -0.07em; --icon-margin-top: -0.23em; --icon-margin-bottom: -0.23em; }
-.icon-wind-beaufort-2 { --icon-margin: -0.05em; --icon-margin-top: -0.23em; --icon-margin-bottom: -0.23em; }
-.icon-wind-beaufort-3 { --icon-margin: -0.05em; --icon-margin-top: -0.23em; --icon-margin-bottom: -0.23em; }
-.icon-wind-beaufort-4 { --icon-margin: -0.05em; --icon-margin-top: -0.23em; --icon-margin-bottom: -0.23em; }
-.icon-wind-beaufort-5 { --icon-margin: -0.05em; --icon-margin-top: -0.23em; --icon-margin-bottom: -0.23em; }
-.icon-wind-beaufort-6 { --icon-margin: -0.05em; --icon-margin-top: -0.23em; --icon-margin-bottom: -0.23em; }
-.icon-wind-beaufort-7 { --icon-margin: -0.05em; --icon-margin-top: -0.23em; --icon-margin-bottom: -0.23em; }
-.icon-wind-beaufort-8 { --icon-margin: -0.05em; --icon-margin-top: -0.23em; --icon-margin-bottom: -0.23em; }
-.icon-wind-beaufort-9 { --icon-margin: -0.05em; --icon-margin-top: -0.23em; --icon-margin-bottom: -0.23em; }
-.icon-wind-beaufort-10 { --icon-margin: 0em; --icon-margin-top: -0.23em; --icon-margin-bottom: -0.23em; }
-.icon-wind-beaufort-11 { --icon-margin: -0.03em; --icon-margin-top: -0.23em; --icon-margin-bottom: -0.23em; }
-.icon-wind-beaufort-12 { --icon-margin: -0.01em; --icon-margin-top: -0.23em; --icon-margin-bottom: -0.23em; }
-.icon-starry-night { --icon-margin: -0.45em; --icon-margin-top: -0.45em; --icon-margin-bottom: -0.45em; }
+.icon-clear-day {
+    --icon-margin: -0.05em;
+    --icon-margin-top: -0.03em;
+    --icon-margin-bottom: -0.03em;
+}
+
+.icon-clear-night {
+    --icon-margin: -0.31em;
+    --icon-margin-top: -0.29em;
+    --icon-margin-bottom: -0.29em;
+}
+
+.icon-mostly-clear-day {
+    --icon-margin: -0.22em;
+    --icon-margin-top: -0.25em;
+    --icon-margin-bottom: -0.31em;
+}
+
+.icon-mostly-clear-night {
+    --icon-margin: -0.34em;
+    --icon-margin-top: -0.45em;
+    --icon-margin-bottom: -0.4em;
+}
+
+.icon-partly-cloudy-day {
+    --icon-margin: -0.13em;
+    --icon-margin-top: -0.25em;
+    --icon-margin-bottom: -0.4em;
+}
+
+.icon-partly-cloudy-night {
+    --icon-margin: -0.18em;
+    --icon-margin-top: -0.32em;
+    --icon-margin-bottom: -0.4em;
+}
+
+.icon-overcast {
+    --icon-margin: -0.15em;
+    --icon-margin-top: -0.4em;
+    --icon-margin-bottom: -0.4em;
+}
+
+.icon-fog-day {
+    --icon-margin: -0.3em;
+    --icon-margin-top: -0.4em;
+    --icon-margin-bottom: -0.15em;
+}
+
+.icon-fog-night {
+    --icon-margin: -0.42em;
+    --icon-margin-top: -0.41em;
+    --icon-margin-bottom: -0.39em;
+}
+
+.icon-extreme-fog {
+    --icon-margin: -0.15em;
+    --icon-margin-top: -0.4em;
+    --icon-margin-bottom: -0.17em;
+}
+
+.icon-partly-cloudy-day-drizzle {
+    --icon-margin: -0.13em;
+    --icon-margin-top: -0.25em;
+    --icon-margin-bottom: -0.25em;
+}
+
+.icon-partly-cloudy-night-drizzle {
+    --icon-margin: -0.18em;
+    --icon-margin-top: -0.32em;
+    --icon-margin-bottom: -0.25em;
+}
+
+.icon-drizzle {
+    --icon-margin: -0.18em;
+    --icon-margin-top: -0.4em;
+    --icon-margin-bottom: -0.25em;
+}
+
+.icon-extreme-drizzle {
+    --icon-margin: -0.15em;
+    --icon-margin-top: -0.4em;
+    --icon-margin-bottom: -0.25em;
+}
+
+.icon-sleet {
+    --icon-margin: -0.18em;
+    --icon-margin-top: -0.4em;
+    --icon-margin-bottom: -0.06em;
+}
+
+.icon-partly-cloudy-day-rain {
+    --icon-margin: -0.13em;
+    --icon-margin-top: -0.25em;
+    --icon-margin-bottom: -0.17em;
+}
+
+.icon-partly-cloudy-night-rain {
+    --icon-margin: -0.18em;
+    --icon-margin-top: -0.32em;
+    --icon-margin-bottom: -0.17em;
+}
+
+.icon-rain {
+    --icon-margin: -0.18em;
+    --icon-margin-top: -0.4em;
+    --icon-margin-bottom: -0.17em;
+}
+
+.icon-extreme-rain {
+    --icon-margin: -0.15em;
+    --icon-margin-top: -0.4em;
+    --icon-margin-bottom: -0.17em;
+}
+
+.icon-extreme-sleet {
+    --icon-margin: -0.15em;
+    --icon-margin-top: -0.4em;
+    --icon-margin-bottom: -0.06em;
+}
+
+.icon-partly-cloudy-day-snow {
+    --icon-margin: -0.13em;
+    --icon-margin-top: -0.25em;
+    --icon-margin-bottom: -0.19em;
+}
+
+.icon-partly-cloudy-night-snow {
+    --icon-margin: -0.18em;
+    --icon-margin-top: -0.32em;
+    --icon-margin-bottom: -0.19em;
+}
+
+.icon-snow {
+    --icon-margin: -0.18em;
+    --icon-margin-top: -0.4em;
+    --icon-margin-bottom: -0.19em;
+}
+
+.icon-extreme-snow {
+    --icon-margin: -0.15em;
+    --icon-margin-top: -0.4em;
+    --icon-margin-bottom: -0.19em;
+}
+
+.icon-hail {
+    --icon-margin: 0em;
+    --icon-margin-top: 0em;
+    --icon-margin-bottom: 0em;
+}
+
+.icon-overcast-rain {
+    --icon-margin: -0.15em;
+    --icon-margin-top: -0.4em;
+    --icon-margin-bottom: -0.17em;
+}
+
+.icon-overcast-snow {
+    --icon-margin: -0.15em;
+    --icon-margin-top: -0.4em;
+    --icon-margin-bottom: -0.19em;
+}
+
+.icon-thunderstorms-day-rain {
+    --icon-margin: -0.13em;
+    --icon-margin-top: -0.25em;
+    --icon-margin-bottom: -0.09em;
+}
+
+.icon-thunderstorms-night-rain {
+    --icon-margin: -0.18em;
+    --icon-margin-top: -0.32em;
+    --icon-margin-bottom: -0.09em;
+}
+
+.icon-thunderstorms-hail {
+    --icon-margin: -0.18em;
+    --icon-margin-top: -0.4em;
+    --icon-margin-bottom: -0.09em;
+}
+
+.icon-thunderstorms-extreme-day-rain {
+    --icon-margin: -0.1em;
+    --icon-margin-top: -0.25em;
+    --icon-margin-bottom: -0.09em;
+}
+
+.icon-thunderstorms-extreme-night-rain {
+    --icon-margin: -0.15em;
+    --icon-margin-top: -0.32em;
+    --icon-margin-bottom: -0.09em;
+}
+
+.icon-thunderstorms-extreme-hail {
+    --icon-margin: -0.15em;
+    --icon-margin-top: -0.4em;
+    --icon-margin-bottom: -0.09em;
+}
+
+.icon-not-available {
+    --icon-margin: -0.3em;
+    --icon-margin-top: -0.6em;
+    --icon-margin-bottom: -0.59em;
+}
+
+.icon-moon-new {
+    --icon-margin: -0.3em;
+    --icon-margin-top: -0.3em;
+    --icon-margin-bottom: -0.3em;
+}
+
+.icon-moon-waxing-crescent {
+    --icon-margin: -0.3em;
+    --icon-margin-top: -0.3em;
+    --icon-margin-bottom: -0.3em;
+}
+
+.icon-moon-first-quarter {
+    --icon-margin: -0.3em;
+    --icon-margin-top: -0.3em;
+    --icon-margin-bottom: -0.3em;
+}
+
+.icon-moon-waxing-gibbous {
+    --icon-margin: -0.3em;
+    --icon-margin-top: -0.3em;
+    --icon-margin-bottom: -0.3em;
+}
+
+.icon-moon-full {
+    --icon-margin: -0.31em;
+    --icon-margin-top: -0.31em;
+    --icon-margin-bottom: -0.31em;
+}
+
+.icon-moon-waning-gibbous {
+    --icon-margin: -0.3em;
+    --icon-margin-top: -0.3em;
+    --icon-margin-bottom: -0.3em;
+}
+
+.icon-moon-last-quarter {
+    --icon-margin: -0.3em;
+    --icon-margin-top: -0.3em;
+    --icon-margin-bottom: -0.3em;
+}
+
+.icon-moon-waning-crescent {
+    --icon-margin: -0.3em;
+    --icon-margin-top: -0.3em;
+    --icon-margin-bottom: -0.3em;
+}
+
+.icon-starry-night {
+    --icon-margin: -0.25em;
+    --icon-margin-top: -0.25em;
+    --icon-margin-bottom: -0.3em;
+}
+
+.icon-barometer-low {
+    --icon-margin: -0.07em;
+    --icon-margin-top: -0.07em;
+    --icon-margin-bottom: -0.07em;
+}
+
+.icon-barometer-moderate {
+    --icon-margin: -0.07em;
+    --icon-margin-top: -0.07em;
+    --icon-margin-bottom: -0.07em;
+}
+
+.icon-barometer-high {
+    --icon-margin: -0.07em;
+    --icon-margin-top: -0.07em;
+    --icon-margin-bottom: -0.07em;
+}
+
+.icon-barometer-very-high {
+    --icon-margin: -0.07em;
+    --icon-margin-top: -0.07em;
+    --icon-margin-bottom: -0.07em;
+}
+
+.icon-barometer-extreme {
+    --icon-margin: -0.07em;
+    --icon-margin-top: -0.07em;
+    --icon-margin-bottom: -0.07em;
+}
+
+.icon-uv-index-1 {
+    --icon-margin: 0.01em;
+    --icon-margin-top: 0.03em;
+    --icon-margin-bottom: 0.03em;
+}
+
+.icon-uv-index-2 {
+    --icon-margin: 0.01em;
+    --icon-margin-top: 0.03em;
+    --icon-margin-bottom: 0.03em;
+}
+
+.icon-uv-index-3 {
+    --icon-margin: 0.01em;
+    --icon-margin-top: 0.03em;
+    --icon-margin-bottom: 0.03em;
+}
+
+.icon-uv-index-4 {
+    --icon-margin: 0.01em;
+    --icon-margin-top: 0.03em;
+    --icon-margin-bottom: 0.03em;
+}
+
+.icon-uv-index-5 {
+    --icon-margin: 0.01em;
+    --icon-margin-top: 0.03em;
+    --icon-margin-bottom: 0.03em;
+}
+
+.icon-uv-index-6 {
+    --icon-margin: 0.01em;
+    --icon-margin-top: 0.03em;
+    --icon-margin-bottom: 0.03em;
+}
+
+.icon-uv-index-7 {
+    --icon-margin: 0.01em;
+    --icon-margin-top: 0.03em;
+    --icon-margin-bottom: 0.03em;
+}
+
+.icon-uv-index-8 {
+    --icon-margin: 0.01em;
+    --icon-margin-top: 0.03em;
+    --icon-margin-bottom: 0.03em;
+}
+
+.icon-uv-index-9 {
+    --icon-margin: 0.01em;
+    --icon-margin-top: 0.03em;
+    --icon-margin-bottom: 0.03em;
+}
+
+.icon-uv-index-10 {
+    --icon-margin: 0.01em;
+    --icon-margin-top: 0.03em;
+    --icon-margin-bottom: 0.03em;
+}
+
+.icon-uv-index-11 {
+    --icon-margin: 0.01em;
+    --icon-margin-top: 0.03em;
+    --icon-margin-bottom: 0.03em;
+}
+
+.icon-uv-index-11-plus {
+    --icon-margin: 0.06em;
+    --icon-margin-top: 0.03em;
+    --icon-margin-bottom: 0.03em;
+}
+
+.icon-pollen-grass-low {
+    --icon-margin: -0.17em;
+    --icon-margin-top: -0.2em;
+    --icon-margin-bottom: -0.1em;
+}
+
+.icon-pollen-grass-moderate {
+    --icon-margin: -0.17em;
+    --icon-margin-top: -0.2em;
+    --icon-margin-bottom: -0.1em;
+}
+
+.icon-pollen-grass-high {
+    --icon-margin: -0.17em;
+    --icon-margin-top: -0.2em;
+    --icon-margin-bottom: -0.1em;
+}
+
+.icon-pollen-grass-very-high {
+    --icon-margin: -0.17em;
+    --icon-margin-top: -0.2em;
+    --icon-margin-bottom: -0.1em;
+}
+
+.icon-pollen-tree-low {
+    --icon-margin: -0.17em;
+    --icon-margin-top: -0.18em;
+    --icon-margin-bottom: -0.08em;
+}
+
+.icon-pollen-tree-moderate {
+    --icon-margin: -0.17em;
+    --icon-margin-top: -0.18em;
+    --icon-margin-bottom: -0.08em;
+}
+
+.icon-pollen-tree-high {
+    --icon-margin: -0.17em;
+    --icon-margin-top: -0.18em;
+    --icon-margin-bottom: -0.08em;
+}
+
+.icon-pollen-tree-very-high {
+    --icon-margin: -0.17em;
+    --icon-margin-top: -0.18em;
+    --icon-margin-bottom: -0.08em;
+}
+
+.icon-pollen-weed-low {
+    --icon-margin: -0.17em;
+    --icon-margin-top: -0.2em;
+    --icon-margin-bottom: -0.1em;
+}
+
+.icon-pollen-weed-moderate {
+    --icon-margin: -0.17em;
+    --icon-margin-top: -0.2em;
+    --icon-margin-bottom: -0.1em;
+}
+
+.icon-pollen-weed-high {
+    --icon-margin: -0.17em;
+    --icon-margin-top: -0.2em;
+    --icon-margin-bottom: -0.1em;
+}
+
+.icon-pollen-weed-very-high {
+    --icon-margin: -0.17em;
+    --icon-margin-top: -0.2em;
+    --icon-margin-bottom: -0.1em;
+}
+
+.icon-fahrenheit {
+    --icon-margin: -0.5em;
+    --icon-margin-top: -0.52em;
+    --icon-margin-bottom: -0.52em;
+}
+
+.icon-sunrise {
+    --icon-margin: -0.05em;
+    --icon-margin-top: -0.38em;
+    --icon-margin-bottom: -0.3em;
+}
+
+.icon-sunset {
+    --icon-margin: -0.05em;
+    --icon-margin-top: -0.38em;
+    --icon-margin-bottom: -0.3em;
+}
+
+.icon-moonrise {
+    --icon-margin: -0.2em;
+    --icon-margin-top: -0.23em;
+    --icon-margin-bottom: -0.18em;
+}
+
+.icon-moonset {
+    --icon-margin: -0.2em;
+    --icon-margin-top: -0.23em;
+    --icon-margin-bottom: -0.15em;
+}
+
+.icon-raindrop {
+    --icon-margin: -0.32em;
+    --icon-margin-top: -0.21em;
+    --icon-margin-bottom: -0.2em;
+}
+
+.icon-raindrops {
+    --icon-margin: -0.2em;
+    --icon-margin-top: -0.21em;
+    --icon-margin-bottom: -0.2em;
+}
+
+.icon-snowflake {
+    --icon-margin: -0.22em;
+    --icon-margin-top: -0.22em;
+    --icon-margin-bottom: -0.22em;
+}
+
+.icon-smoke-particles {
+    --icon-margin: -0.47em;
+    --icon-margin-top: -0.43em;
+    --icon-margin-bottom: -0.43em;
+}
+
+.icon-wind-beaufort-0 {
+    --icon-margin: -0.05em;
+    --icon-margin-top: -0.23em;
+    --icon-margin-bottom: -0.23em;
+}
+
+.icon-wind-beaufort-1 {
+    --icon-margin: -0.07em;
+    --icon-margin-top: -0.23em;
+    --icon-margin-bottom: -0.23em;
+}
+
+.icon-wind-beaufort-2 {
+    --icon-margin: -0.05em;
+    --icon-margin-top: -0.23em;
+    --icon-margin-bottom: -0.23em;
+}
+
+.icon-wind-beaufort-3 {
+    --icon-margin: -0.05em;
+    --icon-margin-top: -0.23em;
+    --icon-margin-bottom: -0.23em;
+}
+
+.icon-wind-beaufort-4 {
+    --icon-margin: -0.05em;
+    --icon-margin-top: -0.23em;
+    --icon-margin-bottom: -0.23em;
+}
+
+.icon-wind-beaufort-5 {
+    --icon-margin: -0.05em;
+    --icon-margin-top: -0.23em;
+    --icon-margin-bottom: -0.23em;
+}
+
+.icon-wind-beaufort-6 {
+    --icon-margin: -0.05em;
+    --icon-margin-top: -0.23em;
+    --icon-margin-bottom: -0.23em;
+}
+
+.icon-wind-beaufort-7 {
+    --icon-margin: -0.05em;
+    --icon-margin-top: -0.23em;
+    --icon-margin-bottom: -0.23em;
+}
+
+.icon-wind-beaufort-8 {
+    --icon-margin: -0.05em;
+    --icon-margin-top: -0.23em;
+    --icon-margin-bottom: -0.23em;
+}
+
+.icon-wind-beaufort-9 {
+    --icon-margin: -0.05em;
+    --icon-margin-top: -0.23em;
+    --icon-margin-bottom: -0.23em;
+}
+
+.icon-wind-beaufort-10 {
+    --icon-margin: 0em;
+    --icon-margin-top: -0.23em;
+    --icon-margin-bottom: -0.23em;
+}
+
+.icon-wind-beaufort-11 {
+    --icon-margin: -0.03em;
+    --icon-margin-top: -0.23em;
+    --icon-margin-bottom: -0.23em;
+}
+
+.icon-wind-beaufort-12 {
+    --icon-margin: -0.01em;
+    --icon-margin-top: -0.23em;
+    --icon-margin-bottom: -0.23em;
+}
+
+.icon-starry-night {
+    --icon-margin: -0.25em;
+    --icon-margin-top: -0.25em;
+    --icon-margin-bottom: -0.3em;
+}

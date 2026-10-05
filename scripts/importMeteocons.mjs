@@ -43,7 +43,10 @@ const OTHER_FILL_ICONS = [
   ),
 ];
 const AQI_ICONS = ['barometer-low', 'barometer-moderate', 'barometer-high', 'barometer-very-high', 'barometer-extreme'];
-const WHITE_ICONS = [...AQI_ICONS, 'smoke-particles', 'fahrenheit', 'starry-night', 'sunrise', 'sunset'];
+const WHITE_ICONS = [...AQI_ICONS, 'smoke-particles', 'fahrenheit', 'starry-night', 'sunrise', 'sunset', 'moonrise', 'moonset'];
+// White icons saved under another name, where the full-color icon of the same
+// name is used differently: the bedtime button's stars
+const WHITE_ICON_NAMES = { 'starry-night': 'bedtime-mode' };
 
 const weatherCodes = JSON.parse(await fs.readFile(path.join(root, 'src', 'weatherCodes.json'), 'utf8'));
 const fillIcons = new Set([UNKNOWN_ICON, ...OTHER_FILL_ICONS]);
@@ -66,16 +69,16 @@ function inWhite(svg) {
     .join('');
 }
 
-async function importIcons(style, names, folder, transform = (svg) => svg) {
+async function importIcons(style, names, folder, transform = (svg) => svg, savedNames = {}) {
   await fs.mkdir(path.join(output, folder), { recursive: true });
   for (const name of names) {
     const response = await fetch(`${SOURCE}/${style}/${name}.svg`);
     if (!response.ok) throw new Error(`${style}/${name}.svg: ${response.status}`);
     const svg = transform(await response.text());
-    await fs.writeFile(path.join(output, folder, `${name}.svg`), svg);
+    await fs.writeFile(path.join(output, folder, `${savedNames[name] ?? name}.svg`), svg);
   }
   console.log(`${folder}: ${names.length} icons`);
 }
 
 await importIcons('fill', [...fillIcons].filter((name) => !CUSTOM_FILL_ICONS.includes(name)), 'fill');
-await importIcons('monochrome', WHITE_ICONS, 'white', inWhite);
+await importIcons('monochrome', WHITE_ICONS, 'white', inWhite, WHITE_ICON_NAMES);

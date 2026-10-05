@@ -226,6 +226,45 @@ export function GetMoonPosition(date = new Date()) {
   };
 }
 
+// The moon's altitude at moonrise and moonset (degrees): its top edge on the
+// horizon, with the atmosphere's refraction, as for sunrise and sunset
+const MOON_EVENT_ALTITUDE = -0.833;
+// How far apart the moon's altitude is checked when looking for moonrise and
+// moonset, and how closely their times are found (ms)
+const MOON_EVENT_STEP = 10 * 60 * 1000;
+const MOON_EVENT_PRECISION = 30 * 1000;
+
+/**
+ * Returns the moonrises and moonsets from `from` to `hours` later, in order,
+ * as [{ type: 'moonrise' or 'moonset', time (ISO 8601) }], found from the
+ * moon's position (see GetMoonPosition), to within half a minute
+ */
+export function GetMoonEvents(from = new Date(), hours = 48) {
+  const above = (time) => GetMoonPosition(new Date(time)).altitude > MOON_EVENT_ALTITUDE;
+  const events = [];
+  const end = from.getTime() + hours * 3600 * 1000;
+  let time = from.getTime();
+  let up = above(time);
+  while (time < end) {
+    const next = time + MOON_EVENT_STEP;
+    const nextUp = above(next);
+    if (nextUp !== up) {
+      // Narrows down when it crossed, between `time` and `next`
+      let low = time;
+      let high = next;
+      while (high - low > MOON_EVENT_PRECISION) {
+        const middle = (low + high) / 2;
+        if (above(middle) === up) low = middle;
+        else high = middle;
+      }
+      events.push({ type: nextUp ? 'moonrise' : 'moonset', time: new Date(Math.round(high)).toISOString() });
+    }
+    time = next;
+    up = nextUp;
+  }
+  return events;
+}
+
 // Today's date on this computer, as YYYY-MM-DD
 function getTodaysDate() {
   return getDate(0);

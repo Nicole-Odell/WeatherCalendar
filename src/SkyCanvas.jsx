@@ -28,7 +28,7 @@ export default function SkyCanvas({ onStatus, cloudSpeed, paused, fadeDuration, 
   useEffect(() => {
     const container = containerRef.current;
     const canvases = {};
-    for (const name of ['background', 'clouds', 'haze']) {
+    for (const name of ['background', 'clouds', 'haze', 'precipitation']) {
       canvases[name] = document.createElement('canvas');
       canvases[name].className = 'sky-background';
       container.appendChild(canvases[name]);
@@ -55,6 +55,8 @@ export default function SkyCanvas({ onStatus, cloudSpeed, paused, fadeDuration, 
     cloudGlow,
     hazeContrast,
     moon,
+    stars,
+    precipitation,
   } = settings;
   const { total, low, mid, high } = clouds;
   useEffect(() => {
@@ -70,6 +72,8 @@ export default function SkyCanvas({ onStatus, cloudSpeed, paused, fadeDuration, 
         cloudGlow,
         hazeContrast,
         moon,
+        stars,
+        precipitation,
       },
       windowSize,
       fadeDuration,
@@ -89,6 +93,8 @@ export default function SkyCanvas({ onStatus, cloudSpeed, paused, fadeDuration, 
     cloudGlow,
     hazeContrast,
     moon,
+    stars,
+    precipitation,
     fadeDuration,
   ]);
 
