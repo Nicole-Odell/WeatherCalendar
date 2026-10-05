@@ -676,9 +676,10 @@ function moonSurfaceBrightness(phase) {
  * settings.moon (see DEFAULT_MOON), with `phase` (0–1, 0.5 is full; full if
  * not given).
  *
- * The phase is lit on the right while waxing and the left while waning, as
- * seen from the northern hemisphere, with the line between lit and dark half
- * an ellipse. Like the stars, the moon's own light is white at full on-screen
+ * The picture is turned clockwise by settings.moon.rotation (degrees), and
+ * the phase is lit on the side settings.moon.brightLimb faces (degrees
+ * counterclockwise from up), with the line between lit and dark half an
+ * ellipse; without it, the right while waxing and the left while waning. Like the stars, the moon's own light is white at full on-screen
  * brightness and takes on eigengrau's hue and saturation as it dims toward
  * black. The glow fades out from the moon's lit part (see moonGlow), so it
  * follows the phase, softening the line between lit and dark, and hides stars
@@ -686,14 +687,13 @@ function moonSurfaceBrightness(phase) {
  */
 export function renderMoon(pixels, size, picture, diameter, top, screenHeight, settings) {
   const { toScreen, skyAt } = prepareScene(settings);
-  const { luminance, contrast, glow, glowWidth, terminatorSoftness, phase: givenPhase } = {
+  const { luminance, contrast, glow, glowWidth, terminatorSoftness, phase: givenPhase, rotation, brightLimb } = {
     ...DEFAULT_MOON,
     ...settings.moon,
   };
   const phase = givenPhase ?? 0.5;
   const radius = diameter / 2;
   const center = size / 2;
-  const pictureLeft = Math.round(center - radius);
 
   const { levels, coverage } = pictureLevels(picture, diameter);
   const weights = Array.from({ length: 256 }, (_, level) => decodeSrgb(level / 255) ** contrast);
@@ -701,10 +701,18 @@ export function renderMoon(pixels, size, picture, diameter, top, screenHeight, s
   const average = coverage.reduce((sum, value, level) => sum + value * weights[level], 0) / covered || 1;
   const surface = (luminance * moonSurfaceBrightness(phase)) / average;
 
-  // The phase: across the disc toward its lit side, x (in radii) is lit
-  // beyond `terminator` times the disc's half-width at that height
-  const litSide = phase < 0.5 ? 1 : -1;
+  // The phase: across the disc toward its lit side (`litX`, `litY` on
+  // screen), it's lit beyond `terminator` times the disc's half-width there.
+  // Without `brightLimb`, it's lit on the right while waxing, else the left.
+  const litAngle = toRadians(brightLimb ?? (phase < 0.5 ? 270 : 90));
+  const litX = -Math.sin(litAngle);
+  const litY = -Math.cos(litAngle);
   const terminator = Math.cos(2 * Math.PI * phase);
+  // The picture, turned clockwise by `rotation`: each pixel shows the
+  // picture at its offset from the center turned back the other way
+  const turn = toRadians(rotation ?? 0);
+  const turnCos = Math.cos(turn);
+  const turnSin = Math.sin(turn);
   // Across the blurred line between lit and dark, the light falls by equal
   // factors (which look even on screen, through the sky's exposure), from the
   // lit surface to below the exposure floor
@@ -754,26 +762,45 @@ export function renderMoon(pixels, size, picture, diameter, top, screenHeight, s
       known.fill(0);
     }
     const dy = row + 0.5 - center;
-    const pictureRow = row - pictureLeft;
     for (let column = 0; column < size; column++) {
       const dx = column + 0.5 - center;
-      const pictureColumn = column - pictureLeft;
-      const inPicture =
-        pictureRow >= 0 && pictureRow < diameter && pictureColumn >= 0 && pictureColumn < diameter;
-      const p = pictureRow * diameter + pictureColumn;
-      const discCover = inPicture ? picture[p * 4 + 3] / 255 : 0;
+      // Where this pixel falls in the (turned) picture, bilinearly sampled
+      let discCover = 0;
+      let brightness = 0;
+      if (dx * dx + dy * dy < (radius + 1) * (radius + 1)) {
+        const x = dx * turnCos + dy * turnSin + radius - 0.5;
+        const y = -dx * turnSin + dy * turnCos + radius - 0.5;
+        const x0 = Math.floor(x);
+        const y0 = Math.floor(y);
+        const fx = x - x0;
+        const fy = y - y0;
+        for (let j = 0; j < 2; j++) {
+          for (let i = 0; i < 2; i++) {
+            const px = x0 + i;
+            const py = y0 + j;
+            if (px < 0 || py < 0 || px >= diameter || py >= diameter) continue;
+            const share = (i ? fx : 1 - fx) * (j ? fy : 1 - fy);
+            const p = py * diameter + px;
+            const cover = (share * picture[p * 4 + 3]) / 255;
+            discCover += cover;
+            brightness += cover * weights[levels[p]];
+          }
+        }
+        if (discCover > 0) brightness /= discCover;
+      }
 
       // The moon's own light where it's lit, and the glow over its dark part,
       // by the distance across to the line between lit and dark
       let light = 0;
       if (discCover > 0) {
-        const up = dy / radius;
-        const halfWidth = Math.sqrt(Math.max(0, 1 - up * up));
-        const beyondTerminator = ((litSide * dx) / radius - halfWidth * terminator) * radius;
+        const along = (dx * litX + dy * litY) / radius;
+        const across = (dy * litX - dx * litY) / radius;
+        const halfWidth = Math.sqrt(Math.max(0, 1 - across * across));
+        const beyondTerminator = (along - halfWidth * terminator) * radius;
         const lit = 10 ** (-blurDecades * smoothstep(blur / 2, -blur / 2, beyondTerminator));
         // (from where the blur starts, so the light only falls toward the dark part)
         const intoDark = Math.max(0, blur / 2 - beyondTerminator);
-        light = discCover * (surface * weights[levels[p]] * lit + (1 - lit) * glowAt(intoDark));
+        light = discCover * (surface * brightness * lit + (1 - lit) * glowAt(intoDark));
       }
       // The glow outside the disc, by distance from the moon's lit part.
       // Beside the dark side of its edge, that's the distance to the edge
@@ -782,7 +809,7 @@ export function renderMoon(pixels, size, picture, diameter, top, screenHeight, s
       if (discCover < 1) {
         const distance = Math.sqrt(dx * dx + dy * dy);
         const beyondEdge = Math.max(0, distance - radius);
-        const towardLit = distance > 0 ? (litSide * dx) / distance : 0;
+        const towardLit = distance > 0 ? (dx * litX + dy * litY) / distance : 0;
         const darkGap = towardLit < 0 ? -towardLit * radius * (1 + terminator) : 0;
         light += (1 - discCover) * glowAt(beyondEdge + darkGap);
       }

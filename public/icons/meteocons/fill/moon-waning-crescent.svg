@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg width="100%" height="100%" viewBox="0 0 128 128" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" xml:space="preserve" xmlns:affinity="https://www.affinity.studio/" style="fill-rule:evenodd;clip-rule:evenodd;stroke-linecap:round;stroke-linejoin:round;">
+    <g id="moon-waning-crescent__moon-waning-crescent">
+        <g id="moon-waning-crescent__Moon" transform="matrix(1,-0,0,1,3.660521,-3.660976)">
+            <g id="moon-waning-crescent__Moon-Phase" affinity:id="moon-waning-crescent__Moon Phase">
+                <path id="moon-waning-crescent__Moon1" affinity:id="moon-waning-crescent__Moon" d="M43.808,39.822C40.978,44.743 39.492,50.323 39.5,56C39.5,73.95 54.05,88.5 72,88.5C77.89,88.5 83.414,86.931 88.179,84.19C82.399,91.105 73.713,95.5 64,95.5C46.603,95.5 32.5,81.397 32.5,64C32.5,54.288 36.895,45.6 43.808,39.822" style="fill:url(#_Linear1);fill-rule:nonzero;stroke:rgb(114,185,213);stroke-width:1px;"/>
+            </g>
+        </g>
+    </g>
+    <defs>
+        <linearGradient id="_Linear1" x1="0" y1="0" x2="1" y2="0" gradientUnits="userSpaceOnUse" gradientTransform="matrix(0,58.273,-58.273,0,61.136,37.727)"><stop offset="0" style="stop-color:rgb(134,195,219);stop-opacity:1"/><stop offset="1" style="stop-color:rgb(114,185,213);stop-opacity:1"/></linearGradient>
+    </defs>
+</svg>

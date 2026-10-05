@@ -9,7 +9,8 @@ import {
   DEFAULT_MOON,
 } from './skyImage.js';
 import { toImperial } from './units.js';
-import { ICONS, UNKNOWN_ICON, iconClass, iconUrl } from './iconList.js';
+import { forecastFor } from './forecastWindow.js';
+import { ICONS, MOON_PHASE_ICONS, UNKNOWN_ICON, iconClass, iconUrl } from './iconList.js';
 import iconsCss from './icons.css?raw';
 import weatherCodes from './weatherCodes.json';
 
@@ -149,6 +150,11 @@ const PLAY_STEP_MINUTES = 1;
 // How often the weather is reloaded from the server (ms). The server only
 // fetches new weather every 15 minutes; this picks it up soon after.
 const WEATHER_RELOAD_INTERVAL = 60 * 1000;
+// How often the forecast is reloaded (ms); the server fetches a new one every
+// 15 minutes
+const FORECAST_RELOAD_INTERVAL = 15 * 60 * 1000;
+// How often the sun times are reloaded (ms)
+const SUN_TIMES_RELOAD_INTERVAL = 60 * 60 * 1000;
 // The kiosk's screen helper (kiosk/display-power.py), which answers only on
 // the Pi showing the display. Anywhere else, bedtime just blacks out the page.
 const SCREEN_POWER = 'http://127.0.0.1:8770/display';
@@ -216,6 +222,26 @@ const MOON_PHASE_NAMES = [
   'waning crescent',
 ];
 const moonPhaseName = (phase) => MOON_PHASE_NAMES[Math.round(phase * 8) % 8];
+
+// The weather code for a clear sky, which at night shows the moon or stars
+const CLEAR_CODE = 0;
+
+function WeatherIcon({ icon }) {
+  return <img className={`weather-icon ${iconClass(icon)}`} src={weatherIconUrl(icon)} alt="" />;
+}
+
+// A clear night's icon: the moon's phase (the nearest of Meteocons' eight)
+// while it's above the horizon, else stars
+function clearNightIcon(moon) {
+  if (!moon || moon.phase === null || !(moon.altitude > 0)) return 'starry-night';
+  return MOON_PHASE_ICONS[Math.round(moon.phase * 8) % 8];
+}
+
+// The weather icon on a clear night, following the moon in the live sky
+function ClearNightIcon() {
+  const sky = useStore(skyStore);
+  return <WeatherIcon icon={clearNightIcon(sky && sky.moon)} />;
+}
 
 // Where the sun is, and the atmosphere the sky colors were calculated with
 function SkyInfo() {
@@ -630,18 +656,18 @@ function DateAndTime({ children }) {
   }, []);
   const date = displayDateFormat.format(now);
   const time = displayTimeFormat.format(now).toLowerCase();
-  return children({ date, time });
+  return children({ date, time, now });
 }
 
 // The US Air Quality Index's categories (the EPA's scale): the highest AQI
-// in each, and its standard color
+// in each, its standard color, and its icon (shown in that color)
 const AQI_CATEGORIES = [
-  { upTo: 50, name: 'Good', color: '#00E400' },
-  { upTo: 100, name: 'Moderate', color: '#FFFF00' },
-  { upTo: 150, name: 'Unhealthy for Sensitive Groups', color: '#FF7E00' },
-  { upTo: 200, name: 'Unhealthy', color: '#FF0000' },
-  { upTo: 300, name: 'Very Unhealthy', color: '#8F3F97' },
-  { upTo: Infinity, name: 'Hazardous', color: '#7E0023' },
+  { upTo: 50, name: 'Good', color: '#00E400', icon: 'barometer-low' },
+  { upTo: 100, name: 'Moderate', color: '#FFFF00', icon: 'barometer-moderate' },
+  { upTo: 150, name: 'Unhealthy for Sensitive Groups', color: '#FF7E00', icon: 'barometer-high' },
+  { upTo: 200, name: 'Unhealthy', color: '#FF0000', icon: 'barometer-very-high' },
+  { upTo: 300, name: 'Very Unhealthy', color: '#8F3F97', icon: 'barometer-extreme' },
+  { upTo: Infinity, name: 'Hazardous', color: '#7E0023', icon: 'barometer-extreme' },
 ];
 const aqiCategory = (aqi) => AQI_CATEGORIES.find((category) => aqi <= category.upTo);
 
@@ -655,22 +681,69 @@ function ValueWithIcon({ value, icon, label, color }) {
     <span className="weather-detail" title={label} style={color ? { color } : undefined}>
       {value}
       {color ? (
-        // The one-color icon as a mask over the color. The shadow is on a
-        // wrapper, as the mask would hide a shadow on the icon itself.
-        <span className="detail-icon-shadow" role="img" aria-label={label}>
-          <span
-            className={`detail-icon colored-icon ${iconClass(icon)}`}
-            style={{
-              backgroundColor: color,
-              WebkitMaskImage: `url(${whiteIconUrl(icon)})`,
-              maskImage: `url(${whiteIconUrl(icon)})`,
-            }}
-          />
-        </span>
+        <ColoredIcon icon={icon} color={color} label={label} />
       ) : (
         <img className={`detail-icon ${iconClass(icon)}`} src={weatherIconUrl(icon)} alt={label} />
       )}
     </span>
+  );
+}
+
+// A one-color icon in `color`: the icon as a mask over the color. The shadow
+// is on a wrapper, as the mask would hide a shadow on the icon itself.
+function ColoredIcon({ icon, color, label, className = 'detail-icon' }) {
+  return (
+    <span className="detail-icon-shadow" role="img" aria-label={label}>
+      <span
+        className={`${className} colored-icon ${iconClass(icon)}`}
+        style={{
+          backgroundColor: color,
+          WebkitMaskImage: `url(${whiteIconUrl(icon)})`,
+          maskImage: `url(${whiteIconUrl(icon)})`,
+        }}
+      />
+    </span>
+  );
+}
+
+// The humidity icon's color: the blue of the raindrop icon
+const HUMIDITY_COLOR = '#2563eb';
+
+// The Beaufort scale: the lowest wind speed (m/s) of each force, 0 to 12
+const BEAUFORT_SPEEDS = [0, 0.5, 1.6, 3.4, 5.5, 8, 10.8, 13.9, 17.2, 20.8, 24.5, 28.5, 32.7];
+const beaufortForce = (speed) => BEAUFORT_SPEEDS.filter((lowest) => speed >= lowest).length - 1;
+
+// Humidity and wind, beside the temperature: each an icon with its value after
+// it. The wind is shown in mph; its icon shows its force on the Beaufort scale
+// (worked out in m/s).
+function HumidityAndWind({ weather }) {
+  const current = weather?.current;
+  const humidity = current?.relative_humidity_2m;
+  const windKmh = current?.wind_speed_10m;
+  const wind = typeof windKmh === 'number' ? windKmh / 3.6 : null;
+  if (typeof humidity !== 'number' && wind === null) return null;
+  return (
+    <div className="humidity">
+      {typeof humidity === 'number' && (
+        <div className="side-detail" title="Humidity">
+          <ColoredIcon icon="smoke-particles" color={HUMIDITY_COLOR} label="Humidity" />
+          <span>{Math.round(humidity)}%</span>
+        </div>
+      )}
+      {wind !== null && (
+        <div className="side-detail" title={`Wind: force ${beaufortForce(wind)} on the Beaufort scale`}>
+          <img
+            className={`detail-icon ${iconClass(`wind-beaufort-${beaufortForce(wind)}`)}`}
+            src={weatherIconUrl(`wind-beaufort-${beaufortForce(wind)}`)}
+            alt={`Wind force ${beaufortForce(wind)}`}
+          />
+          <span>
+            {toImperial(windKmh, 'km/h').value.toFixed(1)}
+            <span className="wind-unit">mph</span>
+          </span>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -702,10 +775,13 @@ function UvIcon({ uvIndex }) {
   );
 }
 
-// A pollen icon for each category with any pollen (from /api/pollen), or
-// nothing at all if none has any
+// The lowest pollen level shown: low pollen (level 1) is nearly always there
+const POLLEN_MIN_LEVEL = 2;
+
+// A pollen icon for each category with at least POLLEN_MIN_LEVEL of pollen
+// (from /api/pollen), or nothing at all if none has
 function PollenIcons({ pollen }) {
-  const shown = POLLEN_CATEGORIES.filter(({ key }) => pollen?.levels[key] > 0);
+  const shown = POLLEN_CATEGORIES.filter(({ key }) => pollen?.levels[key] >= POLLEN_MIN_LEVEL);
   if (shown.length === 0) return null;
   return (
     <span className="weather-detail pollen-icons">
@@ -726,39 +802,128 @@ function PollenIcons({ pollen }) {
   );
 }
 
-const WeatherDisplay = memo(function WeatherDisplay({ weather, pollen }) {
+// A sunrise or sunset: its astronomical dawn or dusk time, then its icon with
+// its time underneath, and anything else (`children`) below that
+function SunEvent({ event, children }) {
+  if (!event) return <div className="sun-event" />;
+  const name = event.type === 'sunrise' ? 'Sunrise' : 'Sunset';
+  return (
+    <div className="sun-event" title={name}>
+      {event.twilight && (
+        <div className="sun-event-twilight" title={event.type === 'sunrise' ? 'Astronomical dawn' : 'Astronomical dusk'}>
+          {displayTimeFormat.format(new Date(event.twilight)).toLowerCase()}
+        </div>
+      )}
+      <img className={`sun-event-icon ${iconClass(event.type)}`} src={whiteIconUrl(event.type)} alt={name} />
+      <div>{displayTimeFormat.format(new Date(event.time)).toLowerCase()}</div>
+      {children}
+    </div>
+  );
+}
+
+// The forecast from now until the next sun event: the high over the low like
+// a fraction, a bar, then the kind of precipitation's icon beside its chance, with
+// the amount under both, right-aligned
+function ForecastUntil({ forecast, now, until }) {
+  const span = until ? forecastFor(forecast, now.getTime(), Date.parse(until.time)) : null;
+  if (!span) return null;
+  const fahrenheit = (celsius) => (celsius === null ? MISSING : Math.round(toImperial(celsius, '°C').value));
+  const inches = toImperial(span.precipitation, 'mm').value.toFixed(1);
+  const chance = span.precipitationChance === null ? MISSING : `${Math.round(span.precipitationChance * 100)}%`;
+  return (
+    <div className="sun-event-forecast">
+      <div className="high-low" title="High and low">
+        <div>{fahrenheit(span.high)}°</div>
+        <div className="high-low-bar" />
+        <div>{fahrenheit(span.low)}°</div>
+      </div>
+      <span className="forecast-divider" />
+      {/* The raindrop and chance, with the amount under them, right-aligned;
+          with no amount, they're centered in the row */}
+      <div className="forecast-rain">
+        <div className="forecast-chance">
+          {span.precipitationIcon === 'drizzle' ? (
+            <ColoredIcon icon="smoke-particles" color={HUMIDITY_COLOR} label="Drizzle" className="forecast-icon" />
+          ) : (
+            <img
+              className={`forecast-icon ${iconClass(span.precipitationIcon)}`}
+              src={weatherIconUrl(span.precipitationIcon)}
+              alt="Precipitation"
+            />
+          )}
+          <span title="Chance of precipitation">{chance}</span>
+        </div>
+        {/* Hidden when none is forecast */}
+        {inches !== '0.0' && <div title="Precipitation">{inches} in</div>}
+      </div>
+    </div>
+  );
+}
+
+// The last sunrise or sunset before `now` and the next one after it, from
+// the sun times' events (yesterday to tomorrow)
+function sunEventsAround(sunTimes, now) {
+  const events = sunTimes?.events ?? [];
+  const next = events.findIndex(({ time }) => Date.parse(time) > now.getTime());
+  if (next === -1) return { last: events[events.length - 1], next: undefined };
+  return { last: events[next - 1], next: events[next] };
+}
+
+const WeatherDisplay = memo(function WeatherDisplay({ weather, pollen, sunTimes, forecast }) {
   const current = weather?.current;
   const code = current ? WEATHER_CODES.get(current.weather_code) : undefined;
   const night = current?.is_day === 0;
   const icon = (night && code?.nightIcon) || code?.icon || UNKNOWN_ICON;
+  const clearNight = night && current.weather_code === CLEAR_CODE;
   const condition = code?.name ?? (current ? `Weather code ${current.weather_code}` : MISSING);
   const aqi = typeof current?.us_aqi === 'number' ? Math.round(current.us_aqi) : null;
   return (
     <section className="weather-display">
       <DateAndTime>
-        {({ date, time }) => (
-          <>
-            <div className="weather-date">{date}</div>
-            <div className="weather-time">{time}</div>
-          </>
-        )}
+        {({ date, time, now }) => {
+          const { last, next } = sunEventsAround(sunTimes, now);
+          return (
+            <>
+              <div className="weather-date">{date}</div>
+              {/* The time, between the last sunrise or sunset and the next one */}
+              <div className="time-row">
+                <SunEvent event={last} />
+                <div className="weather-time">{time}</div>
+                <SunEvent event={next} />
+              </div>
+              {/* The forecast until the next sun event, under it */}
+              <div className="forecast-row">
+                <div className="forecast-slot">
+                  <ForecastUntil forecast={forecast} now={now} until={next} />
+                </div>
+              </div>
+            </>
+          );
+        }}
       </DateAndTime>
       <div className="weather-condition">{condition}</div>
       <div className="weather-now">
-        <img className={`weather-icon ${iconClass(icon)}`} src={weatherIconUrl(icon)} alt="" />
-        <div className="weather-temperature" title="Feels like">
-          {wholeFahrenheit(weather, 'apparent_temperature')}
+        {clearNight ? <ClearNightIcon /> : <WeatherIcon icon={icon} />}
+        {/* The temperature, then humidity and wind centered beside it */}
+        <div className="weather-temperature">
+          <span className="temperature-value" title="Feels like">
+            {wholeFahrenheit(weather, 'apparent_temperature')}
+          </span>
           <img className={`temperature-unit ${iconClass('fahrenheit')}`} src={whiteIconUrl('fahrenheit')} alt="°F" />
+          <HumidityAndWind weather={weather} />
         </div>
       </div>
       <div className="weather-details">
         <UvIcon uvIndex={current?.uv_index} />
-        <ValueWithIcon
-          value={aqi === null ? MISSING : aqi}
-          icon="smoke-particles"
-          label={aqi === null ? 'US Air Quality Index' : `US Air Quality Index: ${aqiCategory(aqi).name}`}
-          color={aqi === null ? 'white' : aqiCategory(aqi).color}
-        />
+        {/* Hidden when there's no AQI */}
+        {aqi !== null && (
+          <ValueWithIcon
+            value={aqi}
+            icon={aqiCategory(aqi).icon}
+            label={`US Air Quality Index: ${aqiCategory(aqi).name}`}
+            color={aqiCategory(aqi).color}
+          />
+        )}
         <PollenIcons pollen={pollen} />
       </div>
     </section>
@@ -838,6 +1003,8 @@ export default function App() {
   const [sunTimes, setSunTimes] = useState(null);
   // Today's pollen levels, from pollen.com (see server/PollenManager.js)
   const [pollen, setPollen] = useState(null);
+  // The forecast for the next two days (see server/ForecastManager.js)
+  const [forecast, setForecast] = useState(null);
   const [sunError, setSunError] = useState(null);
   const [skyError, setSkyError] = useState(null);
   // Time the sky colors are calculated for, as "HH:MM", or '' for now
@@ -925,6 +1092,15 @@ export default function App() {
       setWeatherError(err.message);
     } finally {
       setLoading(false);
+    }
+  }
+
+  // The forecast is only shown when it loads, so a failure just leaves it out
+  async function loadForecast() {
+    try {
+      setForecast(await fetchJson('/api/forecast'));
+    } catch (err) {
+      console.warn('Forecast unavailable:', err.message);
     }
   }
 
@@ -1077,6 +1253,7 @@ export default function App() {
   useEffect(() => {
     loadWeather().then(() => loadSkyColors(''));
     loadPollen();
+    loadForecast();
     loadSunTimes();
   }, []);
 
@@ -1156,6 +1333,19 @@ export default function App() {
     return () => clearInterval(timer);
   }, []);
 
+  // The forecast is reloaded as often as the server fetches a new one
+  useEffect(() => {
+    const timer = setInterval(() => loadForecast(), FORECAST_RELOAD_INTERVAL);
+    return () => clearInterval(timer);
+  }, []);
+
+  // The sun times are reloaded hourly, so the last and next sunrise and sunset
+  // stay current from day to day
+  useEffect(() => {
+    const timer = setInterval(() => loadSunTimes(), SUN_TIMES_RELOAD_INTERVAL);
+    return () => clearInterval(timer);
+  }, []);
+
   // The weather and pollen are reloaded regularly, to pick up the server's new
   // data (the server only fetches new pollen hourly)
   useEffect(() => {
@@ -1192,7 +1382,9 @@ export default function App() {
       {/* In bedtime, covers everything, so the tap that wakes the page doesn't
           also press what's under it */}
       {asleep && <div className="bedtime-overlay" onClick={wake} />}
-      {!settingsOpen && <WeatherDisplay weather={weather} pollen={pollen} />}
+      {!settingsOpen && (
+        <WeatherDisplay weather={weather} pollen={pollen} sunTimes={sunTimes} forecast={forecast} />
+      )}
       <main className="app" style={{ display: settingsOpen ? undefined : 'none' }}>
         {weather && <WeatherTable weather={weather} />}
         {weatherError && <p>Weather error: {weatherError}</p>}

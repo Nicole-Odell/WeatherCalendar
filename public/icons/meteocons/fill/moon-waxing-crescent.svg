@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg width="100%" height="100%" viewBox="0 0 128 128" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" xml:space="preserve" xmlns:affinity="https://www.affinity.studio/" style="fill-rule:evenodd;clip-rule:evenodd;stroke-linecap:round;stroke-linejoin:round;">
+    <g id="moon-waxing-crescent__moon-waxing-crescent">
+        <g id="moon-waxing-crescent__Moon" transform="matrix(0,-1,1,0,-3.660976,131.660476)">
+            <g id="moon-waxing-crescent__Moon-Phase" affinity:id="moon-waxing-crescent__Moon Phase">
+                <path id="moon-waxing-crescent__Moon1" affinity:id="moon-waxing-crescent__Moon" d="M84.191,39.822C91.104,45.6 95.5,54.287 95.5,64C95.5,81.397 81.397,95.5 64,95.5C54.287,95.5 45.6,91.104 39.821,84.192C44.742,87.023 50.323,88.509 56,88.5C73.949,88.5 88.5,73.95 88.5,56C88.5,50.11 86.931,44.586 84.191,39.822" style="fill:url(#_Linear1);fill-rule:nonzero;stroke:rgb(114,185,213);stroke-width:1px;"/>
+            </g>
+        </g>
+    </g>
+    <defs>
+        <linearGradient id="_Linear1" x1="0" y1="0" x2="1" y2="0" gradientUnits="userSpaceOnUse" gradientTransform="matrix(0,58.273,-58.273,0,66.863,37.727)"><stop offset="0" style="stop-color:rgb(134,195,219);stop-opacity:1"/><stop offset="1" style="stop-color:rgb(114,185,213);stop-opacity:1"/></linearGradient>
+    </defs>
+</svg>

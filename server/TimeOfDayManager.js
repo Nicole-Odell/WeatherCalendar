@@ -14,16 +14,24 @@ const SUN_FIELDS = [
 ];
 
 /**
- * Returns today's sun times as { date, times }, where `date` is the date the
- * cache was refreshed (YYYY-MM-DD) and `times` holds an ISO 8601 time, in the
- * location's timezone, for each field. A time is null if that event does not
- * happen that day. Data comes from the cache unless it is from an earlier date
+ * Returns today's sun times as { date, times, events }, where `date` is the
+ * date the cache was refreshed (YYYY-MM-DD) and `times` holds an ISO 8601
+ * time, in the location's timezone, for each field. A time is null if that
+ * event does not happen that day. `events` lists every sunrise and sunset from
+ * yesterday to tomorrow in order, as [{ type: 'sunrise' or 'sunset', time,
+ * twilight }], so the last and next ones are always there; `twilight` is that
+ * day's astronomical dawn (for a sunrise) or dusk (for a sunset), or null if
+ * there's none (the sky never gets fully dark around midsummer). Data comes from the cache unless it is from an earlier date
  * or is missing a field.
  */
 export async function GetSunTimes() {
   const today = getTodaysDate();
   const cached = await readCache(CACHE_NAME);
-  if (cached?.date === today && SUN_FIELDS.every((field) => field in cached.times)) {
+  if (
+    cached?.date === today &&
+    cached.events?.every((event) => 'twilight' in event) &&
+    SUN_FIELDS.every((field) => field in cached.times)
+  ) {
     return cached;
   }
 
@@ -88,28 +96,49 @@ export function GetSunPosition(date = new Date()) {
     elevation: toDegrees(Math.asin(Math.min(1, Math.max(-1, sinElevation)))),
     azimuth: mod(toDegrees(azimuthFromSouth) + 180, 360),
     distance,
+    // (radians, for the moon's lit side; see GetMoonPosition)
+    rightAscension: Math.atan2(Math.cos(obliquity) * Math.sin(apparentLongitude), Math.cos(apparentLongitude)),
+    declination,
   };
 }
 
+// Yesterday's to tomorrow's sun times, in one request
 async function fetchSunTimes(date) {
-  const params = new URLSearchParams({ lat: LATITUDE, lng: LONGITUDE, date });
+  const params = new URLSearchParams({
+    lat: LATITUDE,
+    lng: LONGITUDE,
+    date_start: getDate(-1),
+    date_end: getDate(1),
+  });
   const response = await fetch(`https://api.sunrise-sunset.org/v2?${params}`);
   if (!response.ok) {
     throw new Error(`sunrise-sunset.org request failed (${response.status}): ${await response.text()}`);
   }
 
-  const body = await response.json();
+  const { days } = await response.json();
+  const today = days.find((day) => day.date === date);
+  if (!today) throw new Error(`sunrise-sunset.org gave no times for ${date}`);
+  const events = days
+    .flatMap((day) => [
+      { type: 'sunrise', time: day.sunrise, twilight: day.astronomical_twilight_begin ?? null },
+      { type: 'sunset', time: day.sunset, twilight: day.astronomical_twilight_end ?? null },
+    ])
+    .filter(({ time }) => time)
+    .sort((a, b) => Date.parse(a.time) - Date.parse(b.time));
   return {
     date,
-    times: Object.fromEntries(SUN_FIELDS.map((field) => [field, body[field]])),
+    times: Object.fromEntries(SUN_FIELDS.map((field) => [field, today[field]])),
+    events,
   };
 }
 
 /**
  * Returns the moon's position at the location as { altitude, distance,
- * longitude }: altitude in degrees above the horizon as seen from here
- * (without refraction), distance from Earth's center in km, and ecliptic
- * longitude in degrees. Uses the main terms of Meeus's lunar series
+ * longitude, parallacticAngle, brightLimb }: altitude in degrees above the
+ * horizon as seen from here (without refraction), distance from Earth's center
+ * in km, ecliptic longitude in degrees, how far its north is turned clockwise
+ * from straight up (degrees), and which way its lit side faces, in degrees
+ * counterclockwise from straight up (270 is lit on the right). Uses the main terms of Meeus's lunar series
  * (Astronomical Algorithms, chapter 47), good to about 0.1°.
  */
 export function GetMoonPosition(date = new Date()) {
@@ -174,19 +203,41 @@ export function GetMoonPosition(date = new Date()) {
       Math.cos(latitude) * Math.cos(declination) * Math.cos(hourAngle),
   );
   const parallax = Math.asin(6378.14 / distance);
+  // How the moon is turned as seen from here: the parallactic angle, between
+  // the directions to the celestial north pole and the zenith (Meeus 14.1),
+  // and the position angle of its lit limb's midpoint from north toward east
+  // (Meeus 48.5)
+  const parallactic = Math.atan2(
+    Math.sin(hourAngle),
+    Math.tan(latitude) * Math.cos(declination) - Math.sin(declination) * Math.cos(hourAngle),
+  );
+  const sun = GetSunPosition(date);
+  const brightLimb = Math.atan2(
+    Math.cos(sun.declination) * Math.sin(sun.rightAscension - rightAscension),
+    Math.sin(sun.declination) * Math.cos(declination) -
+      Math.cos(sun.declination) * Math.sin(declination) * Math.cos(sun.rightAscension - rightAscension),
+  );
   return {
     altitude: toDegrees(geocentric - parallax * Math.cos(geocentric)),
     distance,
     longitude: mod(toDegrees(longitude), 360),
+    parallacticAngle: toDegrees(parallactic),
+    brightLimb: mod(toDegrees(brightLimb - parallactic), 360),
   };
 }
 
 // Today's date on this computer, as YYYY-MM-DD
 function getTodaysDate() {
-  const now = new Date();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  return `${now.getFullYear()}-${month}-${day}`;
+  return getDate(0);
+}
+
+// The date `days` days from today on this computer, as YYYY-MM-DD
+function getDate(days) {
+  const date = new Date();
+  date.setDate(date.getDate() + days);
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${date.getFullYear()}-${month}-${day}`;
 }
 
 function toRadians(degrees) {

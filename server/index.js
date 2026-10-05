@@ -1,6 +1,8 @@
 import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import * as AlertsManager from './AlertsManager.js';
+import * as ForecastManager from './ForecastManager.js';
 import * as PollenManager from './PollenManager.js';
 import * as SkyColorManager from './SkyColorManager.js';
 import * as TimeOfDayManager from './TimeOfDayManager.js';
@@ -61,6 +63,27 @@ app.get('/api/weather/current', async (req, res) => {
   }
 });
 
+// The forecast for the next two days (see ForecastManager.GetForecast)
+app.get('/api/forecast', async (req, res) => {
+  try {
+    res.json(await ForecastManager.GetForecast());
+  } catch (error) {
+    console.error('Failed to get the forecast:', error);
+    res.status(502).json({ error: error.message });
+  }
+});
+
+// The National Weather Service's active alerts (see AlertsManager.GetAlerts);
+// ?area=XX gets a state's instead, for testing
+app.get('/api/alerts', async (req, res) => {
+  try {
+    res.json(await AlertsManager.GetAlerts(req.query.area));
+  } catch (error) {
+    console.error('Failed to get alerts:', error);
+    res.status(502).json({ error: error.message });
+  }
+});
+
 // Today's pollen: pollen.com's overall index, and each category's level (see
 // PollenManager.GetPollen)
 app.get('/api/pollen', async (req, res) => {
@@ -84,9 +107,17 @@ app.get('/api/time-of-day/sun-times', async (req, res) => {
 // How often the sky stream sends the sky colors (ms)
 const SKY_STREAM_INTERVAL = 1000;
 
+// What the sky needs of the moon's position: its altitude, how its picture is
+// turned (its north, clockwise from up) and which way its lit side faces
+// (counterclockwise from up), in degrees
+function moonView({ altitude, parallacticAngle, brightLimb }) {
+  return { altitude, rotation: parallacticAngle, brightLimb };
+}
+
 /**
  * Clear-sky colors looking toward the sun, the color of direct sunlight by
- * height, and the moon's altitude (degrees) and phase (0–1, 0.5 is full), at
+ * height, and the moon's altitude, rotation and lit side (see moonView) and phase (0–1, 0.5
+ * is full), at
  * `time`. The atmosphere is from the weather the atmosphere tables in use
  * were built from, which `atmosphere` gives, until new ones are built.
  */
@@ -100,7 +131,7 @@ async function skyAt(time) {
     time: time.toISOString(),
     sun,
     moon: {
-      altitude: TimeOfDayManager.GetMoonPosition(time).altitude,
+      ...moonView(TimeOfDayManager.GetMoonPosition(time)),
       phase: latestWeather ? WeatherManager.GetMoonPhase(latestWeather.moonPhases, time) : null,
     },
     colors: SkyColorManager.CalculateSkyColors(conditions),

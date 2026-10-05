@@ -195,16 +195,145 @@ a {
   font-size: 7vw;
 }
 
+/* The time, with the last sunrise or sunset on its left and the next on its
+   right, each its time with its icon underneath */
+.time-row {
+  display: flex;
+  align-items: center;
+  /* The sun events at the far sides; as they're the same width, the time
+     stays centered */
+  justify-content: space-between;
+  margin-top: 3vw;
+}
+
 .weather-time {
-  margin-top: 1vw;
   font-size: 12vw;
+}
+
+.sun-event {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 16vw;
+  font-size: 4vw;
+}
+
+/* The forecast until the next sun event, under it */
+/* The row under the time with the forecast until the next sun event, with
+   the sun events' text size */
+.forecast-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 1vw;
+  font-size: 4vw;
+}
+
+/* As wide as a sun event and at the same place, so the forecast is centered
+   under it (spilling out evenly on both sides if wider) */
+.forecast-slot {
+  display: flex;
+  justify-content: center;
+  width: 16vw;
+}
+
+/* The forecast until the next sun event, in a row: the high over
+   the low like a fraction, a bar, then a raindrop beside the chance, with the
+   amount centered under them */
+.sun-event-forecast {
+  display: flex;
+  align-items: center;
+  margin-top: 0em;
+  font-size: 0.75em;
+  white-space: nowrap;
+}
+
+.high-low {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1.1;
+}
+
+.high-low-bar {
+  align-self: stretch;
+  height: 0.08em;
+  min-height: 1px;
+  margin: 0.2em 0 0.1em;
+  background: white;
+  box-shadow: var(--text-shadow);
+  /* Stops short of the degree signs, so it's centered on the digits */
+  margin-right: 0.4em;
+}
+
+/* The raindrop and chance in a row, with the amount under them, both
+   right-aligned; a column, so without the amount they're centered in the row */
+.forecast-rain {
+  display: flex;
+  flex-direction: column;
+  /* The chance and the amount right-aligned */
+  align-items: flex-end;
+  line-height: 1.1;
+  margin-left: 1vw;
+}
+
+.forecast-chance {
+  display: flex;
+  align-items: center;
+}
+
+.forecast-icon {
+  width: 1.5em;
+  height: 1.5em;
+  margin-right: 0em;
+  filter: var(--icon-shadow-small);
+}
+
+/* The starry-night icon's margins as the clear night weather icon (icons.css
+   has them for the smaller bedtime button) */
+.weather-icon.icon-starry-night { --icon-margin: -0.41em; --icon-margin-top: -0.44em; --icon-margin-bottom: -0.46em; }
+
+/* The snowflake's margins at the forecast's size (icons.css sizes it for the
+   larger weather icon), and drizzle: smoke-particles upside down, at the
+   forecast's size (measured the same way: meeting the drawing's edges, plus
+   0.2em) */
+.forecast-icon.icon-snowflake { --icon-margin: -0.24em; --icon-margin-top: -0.19em; --icon-margin-bottom: -0.19em; }
+.forecast-icon.icon-smoke-particles {
+  transform: rotate(180deg);
+  --icon-margin: -0.34em;
+  --icon-margin-top: -0.3em;
+  --icon-margin-bottom: -0.3em;
+}
+
+/* A vertical bar between the temperatures and the rain, as tall as the row,
+   like the high/low bar */
+.forecast-divider {
+  align-self: stretch;
+  width: 0.08em;
+  min-width: 1px;
+  margin-left: 0.5em;
+  margin-right: 0;
+  background: white;
+  box-shadow: var(--text-shadow);
+}
+
+/* The astronomical dawn or dusk time, above the icon, the size of the
+   forecast's high and low */
+.sun-event-twilight {
+  font-size: 0.5em;
+}
+
+.sun-event-icon {
+  width: 2em;
+  height: 2em;
+  filter: var(--icon-shadow-small);
 }
 
 .weather-now {
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-top: 0vw;
+  margin-top: 2vw;
+  margin-bottom: 2vw;
   /* The temperature's size, which the weather icon is sized and spaced by */
   font-size: 12vw;
 }
@@ -225,6 +354,47 @@ a {
   align-items: center;
 }
 
+/* Humidity and wind, to the right of the temperature, one under the other:
+   each an icon with its value after it, the size of the weather details */
+.humidity {
+  /* Two columns: the icons centered on each other, and the values starting
+     at the same place */
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  /* The values start at the column's left (the display centers text) */
+  text-align: left;
+  /* As tall as the temperature, with humidity at its top and wind at its
+     bottom; the padding brings them in to the top and bottom of its digits
+     (measured on the Pi 3's screen) */
+  align-self: stretch;
+  align-content: space-between;
+  padding: 1.94vw 0 1.39vw;
+  font-size: 4vw;
+  margin-left: 1vw;
+}
+
+/* The humidity icon, 25% bigger than the other icons beside values */
+.humidity .icon-smoke-particles {
+  width: 1.875em;
+  height: 1.875em;
+}
+
+/* The wind's unit, small and right after the number, as wide as the
+   humidity's % (in the display's font, "mph" is 2.7 times as wide as "%") */
+.wind-unit {
+  font-size: 0.37em;
+}
+
+/* Each row's icon and value go straight into the grid's columns */
+.side-detail {
+  display: contents;
+}
+
+.side-detail > :first-child {
+  justify-self: center;
+}
+
 /* The °F icon after the temperature. The glyph fills only about the middle
    fifth of the icon's height and third of its width, so the icon is large
    enough for the glyph to be about half the digits' height, raised to the
@@ -240,7 +410,7 @@ a {
 }
 
 .weather-condition {
-  margin-top: 5vw;
+  margin-top: -3vw;
   margin-bottom: -2.5vw;
   font-size: 6.5vw;
 }
@@ -272,6 +442,16 @@ a {
   height: 1.5em;
   /* --icon-base-left: 0.1em; */
   filter: var(--icon-shadow-small);
+}
+
+/* The air quality icons (the barometer series), slightly smaller than the other
+   icons beside values */
+.detail-icon[class*='icon-barometer'] {
+  width: 1.1em;
+  height: 1.1em;
+  margin-top: 0.075em;
+  margin-left: 0em;
+  margin-right: 0em;
 }
 
 /* A one-color icon in a chosen color (the icon is a mask over its color) */

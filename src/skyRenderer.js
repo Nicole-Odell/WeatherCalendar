@@ -41,6 +41,8 @@ const CLOUD_ANIMATION_BUDGET = 50;
 // Sky and haze changes of at most this many steps (of 255) are shown straight
 // away: too small to see, so not worth the work of fading
 const INSTANT_CHANGE = 2;
+// The moon's rotation and lit side are drawn in steps of this many degrees
+const MOON_ANGLE_STEP = 0.5;
 // On the CPU, the clouds are only recolored once their colors (in the cloud
 // data) have moved this many steps (of 255) from those last drawn, as each
 // recolor takes a while there
@@ -337,7 +339,11 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
     const firstRow = Math.max(0, Math.floor((drawTop / fullHeight) * cloudHeight));
     const lastRow = Math.min(cloudHeight, Math.ceil(((drawTop + size) / fullHeight) * cloudHeight) + 1);
     const sky = skyColumn.slice(firstRow * 4, lastRow * 4);
-    const { altitude: _, phase, ...moonSettings } = settings.moon;
+    // The rotation and lit side change slowly too, so they're redrawn in
+    // steps of MOON_ANGLE_STEP degrees
+    const { altitude: _, phase, rotation, brightLimb, ...moonSettings } = settings.moon;
+    const step = (angle) => (typeof angle === 'number' ? Math.round(angle / MOON_ANGLE_STEP) * MOON_ANGLE_STEP : angle);
+    settings = { ...settings, moon: { ...settings.moon, rotation: step(rotation), brightLimb: step(brightLimb) } };
     const key = JSON.stringify([
       left,
       drawTop,
@@ -345,6 +351,8 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
       fullHeight,
       moonSettings,
       phase === null || phase === undefined ? null : Math.round(phase * 10000),
+      settings.moon.rotation,
+      settings.moon.brightLimb,
       settings.exposure,
     ]);
     if (key === moon.key && sameValues(sky, moon.sky, INSTANT_CHANGE)) {

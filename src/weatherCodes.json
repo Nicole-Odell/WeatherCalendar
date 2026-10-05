@@ -18,7 +18,7 @@
   { "code": 71, "name": "Light Snow", "icon": "partly-cloudy-day-snow", "nightIcon": "partly-cloudy-night-snow" },
   { "code": 73, "name": "Snow", "icon": "snow" },
   { "code": 75, "name": "Heavy Snow", "icon": "extreme-snow" },
-  { "code": 77, "name": "Snow Grains", "icon": "snowflake" },
+  { "code": 77, "name": "Snow Grains", "icon": "hail" },
   { "code": 80, "name": "Light Showers", "icon": "partly-cloudy-day-rain", "nightIcon": "partly-cloudy-night-rain" },
   { "code": 81, "name": "Showers", "icon": "overcast-rain" },
   { "code": 82, "name": "Heavy Showers", "icon": "extreme-rain" },
