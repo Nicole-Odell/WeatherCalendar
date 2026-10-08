@@ -1225,6 +1225,15 @@ function hourStart(time) {
  * with room for only one row, the time goes beside the title if there's
  * space. With no events left, it's just a line saying so.
  */
+// Whether the calendar shows events (not just a line saying there are none)
+// for the day `offset` days from today: all-day events, or timed ones (today,
+// ones not yet over)
+function calendarHasEvents(calendar, offset) {
+  if (!calendar || !calendar.configured || calendar.date !== dayFromToday(offset)) return false;
+  const now = Date.now();
+  return calendar.events.some((event) => event.allDay || offset !== 0 || Date.parse(event.end) > now);
+}
+
 // An hour's label on the calendar, such as "9 am"
 const hourLabel = (hour) => calendarHourFormat.format(new Date(hour)).replace(' ', '\u00a0').toLowerCase();
 
@@ -2139,22 +2148,27 @@ export default function App() {
           forecast={forecast}
         />
       )}
+      {/* The Today section and the calendar, together, so the tint behind
+          them by day covers both; filling the rest of the screen when the
+          calendar has events to show */}
       {!settingsOpen && !uiHidden && (
-        <TodayTasks
-          tasks={tasks}
-          sunTimes={sunTimes}
-          onDo={doTask}
-          dayOffset={calendarOffset}
-          onShiftDay={(change) => setCalendarOffset(calendarOffset + change)}
-        />
-      )}
-      {!settingsOpen && !uiHidden && calendar && calendar.date === dayFromToday(calendarOffset) && (
-        <CalendarDay
-          calendar={calendar}
-          offset={calendarOffset}
-          refreshing={calendarRefreshing}
-          onRefresh={() => loadCalendar(true)}
-        />
+        <div className={`today-and-calendar${calendarHasEvents(calendar, calendarOffset) ? ' filled' : ''}`}>
+          <TodayTasks
+            tasks={tasks}
+            sunTimes={sunTimes}
+            onDo={doTask}
+            dayOffset={calendarOffset}
+            onShiftDay={(change) => setCalendarOffset(calendarOffset + change)}
+          />
+          {calendar && calendar.date === dayFromToday(calendarOffset) && (
+            <CalendarDay
+              calendar={calendar}
+              offset={calendarOffset}
+              refreshing={calendarRefreshing}
+              onRefresh={() => loadCalendar(true)}
+            />
+          )}
+        </div>
       )}
       <main className="app" style={{ display: settingsOpen && !uiHidden ? undefined : 'none' }}>
         <p>

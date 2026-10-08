@@ -27,7 +27,7 @@ html {
 
 :root {
   /* All text is white, with a soft shadow so it reads over any sky */
-  --text-shadow: 0 0 2em rgba(0, 0, 0, 0.8);
+  --text-shadow: 0 0 1em rgba(0, 0, 0, 0.8);
   /* Icon shadows are sized by the page's base font (rem), not the text around
      the icon, so they stay tight on icons in large text: one for the large
      weather icon, and a tighter one for small icons beside values */
@@ -39,11 +39,24 @@ html {
   /* Thin lines' shadow (the calendar's hour lines): like the controls', dark
      by day and a white glow once the top of the sky is dark */
   --line-shadow: 0 0 2px rgba(0, 0, 0, 0.5);
+  /* The calendar, which sits on the brightest part of the sky by day: its
+     text's shadow (tight and dark at the letters' edges, with a faint halo,
+     by day; the usual soft glow at night), the faint tint behind it (by day
+     only), and its event blocks' fill, fading down into their color (from
+     the first to the second opacity, top to bottom) */
+  --calendar-text-shadow: 0 0 0.2em rgba(0, 0, 0, 0.7), 0 0 0.5em rgba(0, 0, 0, 0.3);
+  --calendar-scrim: rgba(15, 23, 42, 0.1);
+  --calendar-fill-top: rgba(0, 0, 0, 0.1);
+  --calendar-fill-bottom: rgba(0, 0, 0, 0.4);
 }
 
 :root.dark-sky {
   --control-shadow: 0 0 8px rgba(255, 255, 255, 0.5);
   --line-shadow: 0 0 4px rgba(255, 255, 255, 0.5);
+  --calendar-text-shadow: var(--text-shadow);
+  --calendar-scrim: transparent;
+  --calendar-fill-top: rgba(0, 0, 0, 0);
+  --calendar-fill-bottom: rgba(0, 0, 0, 0.25);
 }
 
 /* The calendar's event blocks' 1px border: their calendar's color by day
@@ -383,6 +396,10 @@ a {
 /* Each task: a button as tall as a square around one icon, and as wide as
    its icons (and the 7 beside the bed) need, with no outline or shadow */
 .task {
+  /* Sized so the icons draw about as big as the UV index icon (buttons
+     don't take the text size around them, so this sets everything in the
+     task: its icons, size, spacing and celebration) */
+  font-size: 2.47vw;
   height: 3.25em;
   padding: 0 0.5em;
   white-space: nowrap;
@@ -532,12 +549,17 @@ a {
   display: inline-block;
   vertical-align: middle;
   margin-left: 0.1em;
-  font-size: 1.2em;
+  /* (the size it was before the tasks were made bigger) */
+  font-size: 0.6em;
+  font-weight: bold;
   line-height: 1;
+  /* (the calendar's text shadow, tight by day, which shows on so small a
+     number where the page's wide one doesn't) */
+  text-shadow: var(--calendar-text-shadow);
   /* (lowered to the middle of the bed's drawing, which sits 0.18em of the
      task's text size below the middle of its frame) */
   position: relative;
-  top: calc(0.18em / 1.2);
+  top: calc(0.18em / 0.6);
 }
 
 .task-badge.done {
@@ -550,6 +572,7 @@ a {
   /* Filling the rest of the screen, its hours taking what the all-day events
      leave */
   position: relative;
+  text-shadow: var(--calendar-text-shadow);
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
@@ -557,6 +580,44 @@ a {
   width: 84vw;
   margin: 2vw auto 0;
   font-size: 3vw;
+}
+
+/* The Today section and the calendar together: filling the rest of the
+   screen when the calendar has events (so its hours can fill it), its own
+   layer so the tint below goes behind everything in it */
+.today-and-calendar {
+  position: relative;
+  z-index: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.today-and-calendar.filled {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* The faint tint behind the Today title, tasks and calendar by day
+   (--calendar-scrim): a rounded panel from just above the title (which is
+   6vw + 4vw down, the Today section's and title's top margins) to just below
+   the calendar, as wide as the calendar (84vw, centered) and a little more,
+   its edges softened into the sky */
+.today-and-calendar::before {
+  content: '';
+  position: absolute;
+  top: calc(6vw + 4vw - 1.5vw);
+  right: 2vw;
+  bottom: -1.5vw;
+  left: 2vw;
+  z-index: -1;
+  border-radius: 3vw;
+  background: var(--calendar-scrim);
+  box-shadow: 0 0 3vw 1.5vw var(--calendar-scrim);
+  pointer-events: none;
+}
+
+.calendar-none {
+  text-shadow: var(--calendar-text-shadow);
 }
 
 /* (the events, all-day and timed, keep 12vw clear at each side: the hour
@@ -596,8 +657,13 @@ a {
   left: 12vw;
   right: 12vw;
   height: 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.3);
+  /* (2px by day, on the bright sky, and 1px at night) */
+  border-top: 2px solid rgba(255, 255, 255, 0.3);
   box-shadow: var(--line-shadow);
+}
+
+:root.dark-sky .calendar-hour {
+  border-top-width: 1px;
 }
 
 .calendar-hour-label {
@@ -656,15 +722,16 @@ a {
 }
 
 /* Each event's fill: its calendar's color (set by the page), faded from
-   none at the top to 25% at the bottom, drawn behind its text */
+   --calendar-fill-top to --calendar-fill-bottom (10% to 40% by day, none to
+   25% at night), drawn behind its text */
 .calendar-event-fill {
   position: absolute;
   top: 0;
   right: 0;
   bottom: 0;
   left: 0;
-  -webkit-mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0), rgba(0, 0, 0, 0.25));
-  mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0), rgba(0, 0, 0, 0.25));
+  -webkit-mask-image: linear-gradient(to bottom, var(--calendar-fill-top), var(--calendar-fill-bottom));
+  mask-image: linear-gradient(to bottom, var(--calendar-fill-top), var(--calendar-fill-bottom));
 }
 
 .calendar-event-title,
@@ -699,11 +766,16 @@ a {
   position: absolute;
   left: -1vw;
   right: 0;
-  height: 0.4vw;
-  margin-top: -0.2vw;
-  border-radius: 0.2vw;
+  height: 0.3vw;
+  margin-top: -0.15vw;
+  border-radius: 0.15vw;
   background: white;
   box-shadow: var(--control-shadow);
+}
+
+/* At night, half as bright */
+:root.dark-sky .calendar-now {
+  background: rgba(255, 255, 255, 0.5);
 }
 
 /* In place of the calendar when there are no events left */
