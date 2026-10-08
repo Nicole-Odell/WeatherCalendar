@@ -2,9 +2,11 @@ import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as AlertsManager from './AlertsManager.js';
+import * as CalendarManager from './CalendarManager.js';
 import * as ForecastManager from './ForecastManager.js';
 import * as PollenManager from './PollenManager.js';
 import * as SkyColorManager from './SkyColorManager.js';
+import * as TasksManager from './TasksManager.js';
 import * as TimeOfDayManager from './TimeOfDayManager.js';
 import * as WeatherManager from './WeatherManager.js';
 
@@ -101,6 +103,50 @@ app.get('/api/time-of-day/sun-times', async (req, res) => {
   } catch (error) {
     console.error('Failed to get sun times:', error);
     res.status(502).json({ error: error.message });
+  }
+});
+
+// A day's calendar events (see CalendarManager.GetEvents): today, or the
+// day given as ?date=YYYY-MM-DD, from feeds fetched again with ?fresh=true
+app.get('/api/calendar/today', async (req, res) => {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(req.query.date || '');
+  const date = match ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12) : new Date();
+  try {
+    res.json(await CalendarManager.GetEvents(date, { fresh: req.query.fresh === 'true' }));
+  } catch (error) {
+    console.error('Failed to get calendar events:', error);
+    res.status(502).json({ error: error.message });
+  }
+});
+
+// The daily tasks under "Today": when each was done (see TasksManager)
+app.get('/api/tasks', async (req, res) => {
+  try {
+    res.json(await TasksManager.GetTasks());
+  } catch (error) {
+    console.error('Failed to read tasks:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Marks a task done now, unless it's already been done its number of times
+// since ?since= (the last sunrise)
+app.post('/api/tasks/:task/done', async (req, res) => {
+  try {
+    res.json(await TasksManager.DoTask(req.params.task, req.query.since));
+  } catch (error) {
+    console.error('Failed to mark a task done:', error);
+    res.status(400).json({ error: error.message });
+  }
+});
+
+// Clears every task, so none are done
+app.post('/api/tasks/reset', async (req, res) => {
+  try {
+    res.json(await TasksManager.ResetTasks());
+  } catch (error) {
+    console.error('Failed to reset tasks:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 

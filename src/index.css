@@ -5,6 +5,16 @@ body,
   height: 100%;
 }
 
+/* Padding around everything on the page (the corner buttons, being fixed in
+   place, aren't affected): 3vw above and below, 4vw at the sides */
+#root {
+  box-sizing: border-box;
+  padding: 3vw 4vw 6vw 4vw;
+  /* Stacked, so the calendar can fill what's left of the screen */
+  display: flex;
+  flex-direction: column;
+}
+
 /* The page still scrolls (wheel, or tap and drag), with no scroll bar:
    scrollbar-width for Firefox, ::-webkit-scrollbar for Chromium (74 too) */
 html {
@@ -17,19 +27,35 @@ html {
 
 :root {
   /* All text is white, with a soft shadow so it reads over any sky */
-  --text-shadow: 0 0 0.36em rgba(0, 0, 0, 0.8);
+  --text-shadow: 0 0 2em rgba(0, 0, 0, 0.8);
   /* Icon shadows are sized by the page's base font (rem), not the text around
      the icon, so they stay tight on icons in large text: one for the large
      weather icon, and a tighter one for small icons beside values */
-  --icon-shadow-large: drop-shadow(0 0 0.36rem rgba(0, 0, 0, 0.8));
-  --icon-shadow-small: drop-shadow(0 0 0.2rem rgba(0, 0, 0, 0.8));
+  --icon-shadow-large: drop-shadow(0 0 0.6rem rgba(0, 0, 0, 0.8));
+  --icon-shadow-small: drop-shadow(0 0 0.3rem rgba(0, 0, 0, 0.8));
   /* Controls' outline: a dark shadow, or a white glow once the top of the
      sky is dark (.dark-sky, set by the page) */
-  --control-shadow: 0 0 4px rgba(0, 0, 0, 0.45);
+  --control-shadow: 0 0 16px rgba(0, 0, 0, 0.25);
+  /* Thin lines' shadow (the calendar's hour lines): like the controls', dark
+     by day and a white glow once the top of the sky is dark */
+  --line-shadow: 0 0 2px rgba(0, 0, 0, 0.5);
 }
 
 :root.dark-sky {
-  --control-shadow: 0 0 4px rgba(255, 255, 255, 0.9);
+  --control-shadow: 0 0 8px rgba(255, 255, 255, 0.5);
+  --line-shadow: 0 0 4px rgba(255, 255, 255, 0.5);
+}
+
+/* The calendar's event blocks' 1px border: their calendar's color by day
+   (--event-color, set by the page), white once the top of the sky is dark */
+.calendar-event,
+.calendar-all-day-event {
+  border: 1px solid var(--event-color);
+}
+
+:root.dark-sky .calendar-event,
+:root.dark-sky .calendar-all-day-event {
+  border-color: white;
 }
 
 body {
@@ -80,6 +106,27 @@ button {
 
 button {
   cursor: pointer;
+}
+
+/* The tap highlight: the browser's own is a plain rectangle on many phones,
+   so it's replaced with a brief light fill that follows the control's
+   rounded corners, fading out after the tap */
+input,
+select,
+textarea,
+button {
+  -webkit-tap-highlight-color: transparent;
+  transition: background-color 0.3s ease-out;
+}
+
+button:active,
+select:active {
+  background-color: rgba(255, 255, 255, 0.2);
+  transition: none;
+}
+
+button:disabled:active {
+  background-color: transparent;
 }
 
 button:disabled {
@@ -178,6 +225,12 @@ a {
   z-index: 1;
 }
 
+/* At night (.dark-sky), the corner buttons have no outline, instead of the
+   other controls' white glow */
+:root.dark-sky .corner-button {
+  box-shadow: none;
+}
+
 /* The corner buttons are squares about the size of the temperature's °F,
    with their symbol or icon centered (overflowing evenly when larger) */
 .corner-button {
@@ -195,40 +248,33 @@ a {
   --corner-button-gap: 2vw;
 }
 
-/* Settings (a gear) and show or hide everything (an eye), top left, in
-   one-color fonts' symbols, sized to look as big as the bedtime icon */
+/* Settings (a gear, or a back arrow while open) and show or hide everything
+   (an eye, crossed out while hidden), top left, with Fluent icons sized
+   (font-size, the icons being 1em) to look as big as the bedtime icon */
 .symbol-button {
   left: 12px;
-  font-family: 'DejaVu Sans', 'Noto Sans Symbols', 'Noto Sans Symbols2', sans-serif;
-  font-size: 3.5vw;
-  line-height: 1;
-}
-
-/* (to the right of Settings, or in its place while everything is hidden;
-   a little smaller than the gear, to look the same size) */
-.visibility-toggle {
-  left: calc(12px + var(--corner-button-size) + var(--corner-button-gap));
   font-size: 3.15vw;
 }
 
-.visibility-toggle.crossed-out {
+/* (to the right of Settings, or in its place while everything is hidden) */
+.visibility-toggle {
+  left: calc(12px + var(--corner-button-size) + var(--corner-button-gap));
+}
+
+.visibility-toggle.everything-hidden {
   left: 12px;
 }
 
-/* While everything is hidden, a slash across the eye */
-.visibility-toggle.crossed-out::after {
-  content: '';
+.corner-icon {
+  /* Centered by position, as for the bedtime icon (see below) */
   position: absolute;
   top: 50%;
   left: 50%;
-  width: 57.5%;
-  height: 0.25vw;
-  margin-left: -28.75%;
-  margin-top: -0.125vw;
-  border-radius: 0.125vw;
-  background: white;
-  box-shadow: var(--control-shadow);
-  transform: rotate(-45deg);
+  width: 1em;
+  height: 1em;
+  margin: 0;
+  transform: translate(-50%, -50%);
+  filter: var(--icon-shadow-small);
 }
 
 /* Bedtime, top right, its icon 25% bigger than the button */
@@ -247,6 +293,504 @@ a {
   margin: 0;
   transform: translate(-50%, -50%);
   filter: var(--icon-shadow-small);
+}
+
+/* Today's tasks, under the weather: a title, then a button for each task.
+   Icons are white while not done, and recolored once done. */
+.today {
+  margin-top: 6vw;
+  text-align: center;
+  font-size: 6.5vw;
+}
+
+/* The title and the tasks, stacked and centered as one, with the title
+   centered over the tasks */
+.today-stack {
+  display: inline-block;
+  text-align: left;
+}
+
+.today-title {
+  margin-top: 4vw;
+  margin-bottom: 1.5vw;
+  text-align: center;
+  white-space: nowrap;
+}
+
+/* The title and its arrows, in a row centered on each other */
+.today-title {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+/* The arrows either side of the title, which change the calendar's day:
+   just their icons, the title's size (buttons don't take the text size
+   around them by themselves). The chevrons' drawings are 0.67 of their
+   height and leave about a third of their width empty on the side facing
+   the title. They're 0.75 of the title's size, with margin on the side
+   facing it leaving about 0.49em (34px on the Pi 3) between the drawing and
+   the text. */
+.day-arrow {
+  flex: none;
+  width: 0.75em;
+  height: 0.75em;
+  padding: 0;
+  border: none;
+  box-shadow: none;
+  font-size: inherit;
+  line-height: 0;
+  /* Lowered from the middle of the capitals to the word's visual middle,
+     between them and the middle of the lowercase letters (measured on the
+     Pi 3, as the capitals' middle looks too high) */
+  position: relative;
+  top: 0.09em;
+}
+
+.day-arrow:first-child {
+  margin-right: 0.23em;
+}
+
+.day-arrow:last-child {
+  margin-left: 0.23em;
+}
+
+.day-arrow:active {
+  background-color: transparent;
+}
+
+.day-arrow img {
+  width: 100%;
+  height: 100%;
+  filter: var(--icon-shadow-small);
+}
+
+.today-title-text {
+  line-height: 1.15;
+}
+
+.today-tasks {
+  display: flex;
+  /* (centered under the title, however wide the title is) */
+  justify-content: center;
+}
+
+/* Spacing with margins, as Chromium 74 (on the Pi 3) has no gap in flex layouts */
+.today-tasks > * + * {
+  margin-left: 0vw;
+}
+
+/* Each task: a button as tall as a square around one icon, and as wide as
+   its icons (and the 7 beside the bed) need, with no outline or shadow */
+.task {
+  height: 3.25em;
+  padding: 0 0.5em;
+  white-space: nowrap;
+  line-height: 0;
+  box-shadow: none;
+}
+
+/* No tap highlight on tasks: tapping one celebrates instead (see below) */
+.task,
+.task:active {
+  position: relative;
+  background-color: transparent;
+}
+
+/* A task's contents, which pop when it's tapped */
+.task-content {
+  display: inline-block;
+  vertical-align: middle;
+  line-height: 0;
+  white-space: nowrap;
+}
+
+.task-pop {
+  animation: task-pop 0.45s cubic-bezier(0.3, 1.6, 0.5, 1);
+}
+
+@keyframes task-pop {
+  0% {
+    transform: scale(1);
+  }
+  35% {
+    transform: scale(1.25);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* The burst around a tapped task: a ring spreading out and fading, and a
+   circle of colored sparks flying out with it (0.8s in all, as
+   TASK_BURST_MS in App.jsx) */
+.task-burst {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 3em;
+  height: 3em;
+  margin: -1.5em 0 0 -1.5em;
+  pointer-events: none;
+}
+
+.task-burst::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  border: 0.12em solid rgba(255, 255, 255, 0.9);
+  border-radius: 50%;
+  animation: task-ring 0.6s ease-out forwards;
+}
+
+.task-burst::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 0.24em;
+  height: 0.24em;
+  margin: -0.12em 0 0 -0.12em;
+  border-radius: 50%;
+  box-shadow:
+    0 -1.5em 0 #fbbf24,
+    1.06em -1.06em 0 #22c55e,
+    1.5em 0 0 #60a5fa,
+    1.06em 1.06em 0 #f472b6,
+    0 1.5em 0 #fbbf24,
+    -1.06em 1.06em 0 #22c55e,
+    -1.5em 0 0 #60a5fa,
+    -1.06em -1.06em 0 #f472b6;
+  animation: task-sparks 0.8s ease-out forwards;
+}
+
+@keyframes task-ring {
+  from {
+    transform: scale(0.3);
+    opacity: 1;
+  }
+  to {
+    transform: scale(1.3);
+    opacity: 0;
+  }
+}
+
+@keyframes task-sparks {
+  0% {
+    transform: scale(0.3);
+    opacity: 1;
+  }
+  60% {
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1.25);
+    opacity: 0;
+  }
+}
+
+/* Each icon's place, which carries the icons' usual shadow */
+.task-icon-shadow {
+  display: inline-block;
+  vertical-align: middle;
+  line-height: 0;
+  filter: var(--icon-shadow-small);
+}
+
+.task-icon {
+  display: block;
+  margin: 0;
+}
+
+.task-icon {
+  width: 2.25em;
+  height: 2.25em;
+}
+
+/* The custom icons' drawings fill only about half their frame (Fluent's
+   fill about four fifths, as the corner buttons'), so they're drawn bigger to look the same size,
+   taking up the same 2.25em as the others */
+.task-icon.task-icon-custom {
+  width: 4em;
+  height: 4em;
+  margin: -0.875em;
+}
+
+/* The second cup of water, closer to the first: about 0.25em between their
+   drawings (each cup's drawing is 0.35 of its 4em width, centered) */
+.task-second-cup {
+  margin-left: -0.6em;
+}
+
+/* The 7 of 7 hours' sleep, beside the bed and centered on it, the size of the
+   humidity and wind values; green once done */
+.task-badge {
+  display: inline-block;
+  vertical-align: middle;
+  margin-left: 0.1em;
+  font-size: 1.2em;
+  line-height: 1;
+  /* (lowered to the middle of the bed's drawing, which sits 0.18em of the
+     task's text size below the middle of its frame) */
+  position: relative;
+  top: calc(0.18em / 1.2);
+}
+
+.task-badge.done {
+  color: #22c55e;
+}
+
+/* Today's calendar, under the tasks and centered: all-day events, then the
+   hours from now on with each event as a block in its calendar's color */
+.calendar-day {
+  /* Filling the rest of the screen, its hours taking what the all-day events
+     leave */
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  width: 84vw;
+  margin: 2vw auto 0;
+  font-size: 3vw;
+}
+
+/* (the events, all-day and timed, keep 12vw clear at each side: the hour
+   labels' room at the left, and as much at the right, so they're centered) */
+.calendar-all-day {
+  margin-left: 12vw;
+  margin-right: 12vw;
+  margin-bottom: 2vw;
+}
+
+.calendar-all-day-event {
+  position: relative;
+  margin-bottom: 1vw;
+  padding: 0.6vw 1.5vw;
+  border-radius: 1vw;
+  box-shadow: var(--control-shadow);
+  font-weight: bold;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* The hours, filling the calendar's height, which the day's span is fitted
+   into: a line at the start of each hour, labeled with its time to the left
+   where an event starts or ends in it */
+.calendar-hours {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 30vw;
+  /* Room below for the lower half of the last hour's label (the labels are
+     0.85em tall, centered on their lines) */
+  margin-bottom: calc(0.85em / 2);
+}
+
+.calendar-hour {
+  position: absolute;
+  left: 12vw;
+  right: 12vw;
+  height: 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.3);
+  box-shadow: var(--line-shadow);
+}
+
+.calendar-hour-label {
+  position: absolute;
+  right: 100%;
+  top: 0;
+  margin-right: 1.5vw;
+  font-size: 0.85em;
+  line-height: 1;
+  transform: translateY(-50%);
+  opacity: 0.8;
+  white-space: nowrap;
+}
+
+/* The events, placed by time down the hours and side by side where they overlap */
+.calendar-events {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 12vw;
+  right: 12vw;
+}
+
+/* Each event: rows of text --calendar-row tall in --calendar-padding (both
+   set by the page, see CalendarDay), so a one-hour event fits a row with a
+   whole day shown. The title wraps onto the rows left above the time (cut
+   off with an ellipsis after the last, set by the page). */
+.calendar-event {
+  position: absolute;
+  box-sizing: border-box;
+  padding: var(--calendar-padding) 1vw;
+  /* See-through but for a fill fading into its calendar's color (see
+     .calendar-event-fill), with a 1px border (see above;
+     CALENDAR_EVENT_BORDER_PX in App.jsx) and the controls' shadow */
+  border-radius: 0.8vw;
+  overflow: hidden;
+  box-shadow: var(--control-shadow);
+}
+
+.calendar-event-title {
+  font-weight: bold;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: calc(var(--calendar-row) / 1.2);
+  line-height: var(--calendar-row);
+  word-wrap: break-word;
+}
+
+.calendar-event-time {
+  overflow: hidden;
+  font-size: calc(var(--calendar-row) * 2 / 3);
+  line-height: var(--calendar-row);
+  white-space: nowrap;
+  opacity: 0.9;
+}
+
+/* Each event's fill: its calendar's color (set by the page), faded from
+   none at the top to 25% at the bottom, drawn behind its text */
+.calendar-event-fill {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  -webkit-mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0), rgba(0, 0, 0, 0.25));
+  mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0), rgba(0, 0, 0, 0.25));
+}
+
+.calendar-event-title,
+.calendar-event-time,
+.calendar-event-text {
+  position: relative;
+}
+
+/* With room for one row: the title on one line, cut off with an ellipsis,
+   and the time beside it if there's space (it gives way first) */
+.calendar-event.one-row {
+  display: flex;
+  align-items: baseline;
+}
+
+.calendar-event.one-row .calendar-event-title {
+  display: block;
+  flex: 0 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.calendar-event.one-row .calendar-event-time {
+  flex: 0 1000 auto;
+  min-width: 0;
+  margin-left: 0.8vw;
+}
+
+/* The time now: a line across the events */
+.calendar-now {
+  position: absolute;
+  left: -1vw;
+  right: 0;
+  height: 0.4vw;
+  margin-top: -0.2vw;
+  border-radius: 0.2vw;
+  background: white;
+  box-shadow: var(--control-shadow);
+}
+
+/* In place of the calendar when there are no events left */
+.calendar-none {
+  width: 84vw;
+  margin: 5vw auto 4vw;
+  text-align: center;
+  font-size: 3vw;
+}
+
+.calendar-none-text {
+  opacity: 0.8;
+}
+
+/* The refresh button: a small circle centered over the first hour's label
+   (its place is as wide as an unseen copy of the label, ending where the
+   labels do, 1.5vw left of the events), its icon spinning while the calendar
+   reloads. It's beside the first all-day event, or else level with the
+   daily task buttons (measured by the page). */
+.calendar-refresh-place {
+  position: absolute;
+  height: 0;
+  line-height: 0;
+}
+
+.calendar-refresh-place.beside-tasks {
+  right: calc(100% - 10.5vw);
+}
+
+.calendar-refresh-place.beside-all-day {
+  top: 50%;
+  right: 100%;
+  margin-right: 1.5vw;
+}
+
+.calendar-refresh-label {
+  visibility: hidden;
+  font-size: 0.85em;
+  white-space: nowrap;
+}
+
+.calendar-all-day-row {
+  position: relative;
+}
+
+.calendar-refresh {
+  position: absolute;
+  top: -2vw;
+  left: 50%;
+  width: 4vw;
+  height: 4vw;
+  margin-left: -2vw;
+  padding: 0;
+  border-radius: 50%;
+  line-height: 0;
+}
+
+/* With no events, the refresh button sits centered under the text instead */
+.calendar-none .calendar-refresh {
+  position: relative;
+  top: auto;
+  left: auto;
+  display: block;
+  margin: 2vw auto 0;
+}
+
+.calendar-refresh img {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 2.8vw;
+  height: 2.8vw;
+  margin: -1.4vw 0 0 -1.4vw;
+  filter: var(--icon-shadow-small);
+}
+
+.calendar-refresh.refreshing img {
+  animation: calendar-refresh-spin 0.8s linear infinite;
+}
+
+@keyframes calendar-refresh-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* Bedtime: black over everything while the screen is off; a tap wakes it */
@@ -330,7 +874,7 @@ a {
  * above 0) and pollen (an icon for each kind with any)
  */
 .weather-display {
-  padding: 3vw 4vw 0;
+  /* (padded by the page, see #root) */
   text-align: center;
   line-height: 1.15;
 }
@@ -509,10 +1053,10 @@ a {
   filter: var(--icon-shadow-large);
 }
 
-/* The row's sides share the room either side of the temperature's number
-   equally, so the number stays centered: the moon event and weather icon at
-   the right of the left side, and the right side left empty for what's
-   beside the number (see .weather-temperature-side) */
+/* The row's sides share the room either side of the temperature (its
+   number and °F) equally, so it stays centered: the moon event and weather
+   icon at the right of the left side, and the right side left empty for
+   what's beside it (see .weather-temperature-side) */
 .weather-now-left,
 .weather-now-right {
   flex: 1 1 0;
@@ -524,14 +1068,16 @@ a {
   justify-content: flex-end;
 }
 
-/* Just the number, so it's what's centered and sets the height humidity
-   and wind stretch to */
+/* The number and °F, centered on each other, so they're what's centered;
+   the number sets the height humidity and wind stretch to */
 .weather-temperature {
   position: relative;
+  display: flex;
+  align-items: center;
 }
 
-/* The unit, humidity and wind, out of the layout just right of the number,
-   as tall as it */
+/* Humidity and wind, out of the layout just right of the °F, as tall as the
+   number */
 .weather-temperature-side {
   position: absolute;
   top: 0;
@@ -568,6 +1114,38 @@ a {
   height: 1.875em;
 }
 
+/* The wind icon, with a light rounded box behind its force number (drawn
+   dark in the icon's lower right, so it would vanish against a dark sky),
+   with its own shadow. The box is placed in the icon's 128-unit drawing,
+   scaled to the icon's 1.5em, from where the icon's spacing puts it. */
+.wind-icon {
+  position: relative;
+  display: inline-block;
+  line-height: 0;
+}
+
+/* (so the icon is drawn over the box) */
+.wind-icon img {
+  position: relative;
+}
+
+.wind-number-box {
+  position: absolute;
+  left: calc(var(--icon-base-left, 0px) + var(--icon-margin, 0em) + 1.5em * 92.25 / 128);
+  top: calc(var(--icon-base-top, 0px) + var(--icon-margin-top, 0em) + 1.5em * 75.25 / 128);
+  width: calc(1.5em * 19 / 128);
+  height: calc(1.5em * 19 / 128);
+  border-radius: calc(1.5em * 4.6 / 128);
+  background: #e2e8f0;
+  box-shadow: 0 0 0.2rem rgba(0, 0, 0, 0.8);
+}
+
+/* Forces 10 to 12: wide enough for both digits */
+.wind-number-box.two-digits {
+  left: calc(var(--icon-base-left, 0px) + var(--icon-margin, 0em) + 1.5em * 86.65 / 128);
+  width: calc(1.5em * 28.2 / 128);
+}
+
 /* The wind's unit, small and right after the number, as wide as the
    humidity's % (in the display's font, "mph" is 2.7 times as wide as "%") */
 .wind-unit {
@@ -598,7 +1176,7 @@ a {
 }
 
 .weather-condition {
-  margin-top: -3vw;
+  margin-top: 0vw;
   margin-bottom: -2.5vw;
   font-size: 6.5vw;
 }

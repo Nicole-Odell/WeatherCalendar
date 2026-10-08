@@ -22,6 +22,11 @@ const FIRST_SHAPES_MS = 1000;
 const MARGIN_STEP = 16;
 // Most canvases and arrays of each size kept for reuse
 const POOL_SIZE = 4;
+// The clouds are only drawn again for motion once some band has drifted this
+// many pixels (of the clouds' image, a quarter of the screen's resolution)
+// since they were last drawn: about a screen pixel. Slow clouds then cost far
+// fewer redraws, each of which makes the Pi 3 composite the whole screen.
+const MIN_DRAWN_DRIFT = 0.25;
 
 /**
  * Draws the cloud layers on the CPU, with motion, into `canvas` (2D). Each
@@ -45,14 +50,21 @@ export function createCpuCloudRenderer(canvas, createCanvas, cloudSpeed) {
     width: 0,
     height: 0,
     shapeKey: null,
-    // The cloud clock the clouds are shown at
+    // The cloud clock the clouds are shown at, and the one they were last
+    // drawn at
     clock: 0,
+    drawnClock: 0,
     // Frames faded between (see createFrame): `to` fades in over `from`
     from: null,
     to: null,
     fade: { start: 0, duration: 1 },
     // Shapes being worked out, if any
     job: null,
+    // Whether anything shown has changed since the clouds were last drawn:
+    // the canvas is only drawn again then (or during a fade), as each redraw
+    // makes the browser composite the whole screen again, which is slow on
+    // the Pi 3
+    changed: true,
     // How long the last shapes took (ms, from start to finish, including
     // breaks for other work) and the last coloring
     shapesMs: null,
@@ -116,6 +128,7 @@ export function createCpuCloudRenderer(canvas, createCanvas, cloudSpeed) {
     if (frame.pixels !== pixels) returnArray(frame.pixels);
     frame.pixels = pixels;
     frame.canvas.getContext('2d').putImageData(new ImageData(pixels, frame.width, frame.height), 0, 0);
+    state.changed = true;
   }
 
   // Draws `frame` into `context` at the current cloud clock: each band of rows
@@ -192,6 +205,7 @@ export function createCpuCloudRenderer(canvas, createCanvas, cloudSpeed) {
     }
     state.to = frame;
     state.fade = { start: performance.now(), duration: Math.max(1, duration) };
+    state.changed = true;
   }
 
   /**
@@ -270,6 +284,7 @@ export function createCpuCloudRenderer(canvas, createCanvas, cloudSpeed) {
     retire(state.from);
     state.from = shown;
     state.fade = { start: performance.now(), duration: Math.max(1, duration) };
+    state.changed = true;
   }
 
   return {
@@ -294,6 +309,7 @@ export function createCpuCloudRenderer(canvas, createCanvas, cloudSpeed) {
         retire(state.to);
         state.from = null;
         state.to = null;
+        state.changed = true;
       }
       if (resized || shapeKey !== state.shapeKey) {
         state.shapeKey = shapeKey;
@@ -309,6 +325,10 @@ export function createCpuCloudRenderer(canvas, createCanvas, cloudSpeed) {
      */
     step(clock) {
       state.clock = clock;
+      if (state.to && !state.changed) {
+        const fastest = Math.max(0, ...state.to.bands.map((band) => band.speed));
+        if (Math.abs(clock - state.drawnClock) * fastest * state.to.height >= MIN_DRAWN_DRIFT) state.changed = true;
+      }
       const { to } = state;
       if (!state.job && to?.shapes) {
         const drifted = Math.max(0, ...to.bands.map((band) => (clock - to.clock) * band.speed * to.height));
@@ -320,6 +340,10 @@ export function createCpuCloudRenderer(canvas, createCanvas, cloudSpeed) {
     paint(now) {
       if (!state.to) return false;
       const progress = fadeProgress(now);
+      // Nothing to draw again unless something changed or a fade is under way
+      if (!state.changed && !(state.from && progress < 1)) return false;
+      state.changed = false;
+      state.drawnClock = state.clock;
       drawBlend(canvas, progress);
       if (progress >= 1 && state.from) {
         retire(state.from);

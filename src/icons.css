@@ -574,3 +574,27 @@
     --icon-margin-top: -0.25em;
     --icon-margin-bottom: -0.3em;
 }
+
+.icon-settings-24-regular {
+    --icon-margin: 0.09em;
+    --icon-margin-top: 0.11em;
+    --icon-margin-bottom: 0.11em;
+}
+
+.icon-arrow-left-24-regular {
+    --icon-margin: 0.08em;
+    --icon-margin-top: 0.04em;
+    --icon-margin-bottom: 0.04em;
+}
+
+.icon-eye-24-regular {
+    --icon-margin: 0.11em;
+    --icon-margin-top: -0.03em;
+    --icon-margin-bottom: -0.09em;
+}
+
+.icon-eye-off-24-regular {
+    --icon-margin: 0.12em;
+    --icon-margin-top: 0.12em;
+    --icon-margin-bottom: 0.12em;
+}

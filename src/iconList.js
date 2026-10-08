@@ -3,9 +3,19 @@ import weatherCodes from './weatherCodes.json';
 // The icon shown for weather codes that aren't in weatherCodes.json
 export const UNKNOWN_ICON = 'not-available';
 
-// Meteocons icons, without animation (see scripts/importMeteocons.mjs): full
-// color, and one-color made white
-export const iconUrl = (name, style = 'fill') => `/icons/meteocons/${style === 'fill' ? 'fill' : 'white'}/${name}.svg`;
+// An icon's file, by its set:
+// - 'meteocons': Meteocons, without animation (see
+//   scripts/importMeteocons.mjs), in style 'fill' (full color) or 'white'
+//   (one-color made white)
+// - 'fluent': Fluent UI System Icons (see scripts/importFluent.mjs), in style
+//   'color' (full color) or 'white' (one-color made white)
+// - 'custom': icons made for the display, kept in public/icons/custom (not
+//   imported, so edit them there), each in full color
+export const iconUrl = (name, style = 'fill', set = 'meteocons') => {
+  if (set === 'custom') return `/icons/custom/${name}.svg`;
+  if (set === 'fluent') return `/icons/fluent/${style === 'white' ? 'white' : 'color'}/${name}.svg`;
+  return `/icons/meteocons/${style === 'fill' ? 'fill' : 'white'}/${name}.svg`;
+};
 
 // The classes for an icon: .icon (spacing, see index.css) and its own class
 // with its spacing adjustment (see icons.css)
@@ -26,9 +36,36 @@ const pollenIcons = ['grass', 'tree', 'weed'].flatMap((type) =>
 const PRECIPITATION_ICONS = ['raindrop', 'raindrops', 'snowflake'];
 const uvIcons = [...Array.from({ length: 11 }, (_, i) => `uv-index-${i + 1}`), 'uv-index-11-plus'];
 
+// Fluent icons on the corner buttons (see scripts/importFluent.mjs)
+export const SETTINGS_ICON = 'settings-24-regular';
+export const BACK_ICON = 'arrow-left-24-regular';
+export const SHOW_SKY_ICON = 'eye-24-regular';
+export const SHOW_ALL_ICON = 'eye-off-24-regular';
+// The arrows either side of the Today title (see TodayTasks in App.jsx)
+export const DAY_BACK_ICON = 'chevron-left-24-regular';
+export const DAY_ON_ICON = 'chevron-right-24-regular';
+// The calendar's refresh button
+export const REFRESH_ICON = 'arrow-clockwise-24-regular';
+
+// Icons for today's tasks (see TodayTasks in App.jsx): custom icons, drawn
+// empty while not done and filled once done
+export const CUSTOM_TASK_ICONS = {
+  stretch: 'excersise-empty',
+  stretchDone: 'excersise-filled',
+  sleep: 'bed-empty',
+  sleepDone: 'bed-filled',
+  leave: 'leave-house-empty',
+  leaveDone: 'leave-house-filled',
+  water: 'water-cup-empty',
+  waterDone: 'water-cup-full',
+  work: 'work-empty',
+  workDone: 'work-filled',
+};
+
 /**
- * Every icon the display uses: its name, style ('fill' or 'white'), size in
- * em of the text beside it (as the display draws it), and what it's used for
+ * Every icon the display uses: its name, set ('meteocons' unless given, see
+ * iconUrl), style, size in em of the text beside it (as the display draws
+ * it), and what it's used for
  */
 export const ICONS = [
   ...weatherIcons.map((name) => ({ name, style: 'fill', size: 2, use: 'Weather' })),
@@ -59,4 +96,14 @@ export const ICONS = [
     use: 'Humidity and wind',
   })),
   { name: 'bedtime-mode', style: 'white', size: 1.5, use: 'Bedtime button' },
+  ...Object.values(CUSTOM_TASK_ICONS).map((name) => ({ name, set: 'custom', style: 'color', size: 2.25, use: 'Today' })),
+  ...[DAY_BACK_ICON, DAY_ON_ICON].map((name) => ({ name, set: 'fluent', style: 'white', size: 1, use: 'Today' })),
+  { name: REFRESH_ICON, set: 'fluent', style: 'white', size: 0.93, use: 'Today' },
+  ...[SETTINGS_ICON, BACK_ICON, SHOW_SKY_ICON, SHOW_ALL_ICON].map((name) => ({
+    name,
+    set: 'fluent',
+    style: 'white',
+    size: 1,
+    use: 'Corner buttons',
+  })),
 ];
