@@ -6,10 +6,16 @@ body,
 }
 
 /* Padding around everything on the page (the corner buttons, being fixed in
-   place, aren't affected): 3vw above and below, 4vw at the sides */
+   place, aren't affected): 3vw above, --page-padding-bottom below and
+   --page-padding-x at the sides */
+:root {
+  --page-padding-x: 4vw;
+  --page-padding-bottom: 6vw;
+}
+
 #root {
   box-sizing: border-box;
-  padding: 3vw 4vw 6vw 4vw;
+  padding: 3vw var(--page-padding-x) var(--page-padding-bottom) var(--page-padding-x);
   /* Stacked, so the calendar can fill what's left of the screen */
   display: flex;
   flex-direction: column;
@@ -27,49 +33,52 @@ html {
 
 :root {
   /* All text is white, with a soft shadow so it reads over any sky */
-  --text-shadow: 0 0 1em rgba(0, 0, 0, 0.8);
+  --text-shadow: 0 0 0.5em rgba(0, 0, 0, 0.8);
   /* Icon shadows are sized by the page's base font (rem), not the text around
      the icon, so they stay tight on icons in large text: one for the large
-     weather icon, and a tighter one for small icons beside values */
+     weather icon, and a tighter one for medium and small icons beside values */
   --icon-shadow-large: drop-shadow(0 0 0.6rem rgba(0, 0, 0, 0.8));
+  --icon-shadow-medium: drop-shadow(0 0 0.3rem rgba(0, 0, 0, 0.4));
   --icon-shadow-small: drop-shadow(0 0 0.3rem rgba(0, 0, 0, 0.8));
-  /* Controls' outline: a dark shadow, or a white glow once the top of the
-     sky is dark (.dark-sky, set by the page) */
-  --control-shadow: 0 0 16px rgba(0, 0, 0, 0.25);
-  /* Thin lines' shadow (the calendar's hour lines): like the controls', dark
-     by day and a white glow once the top of the sky is dark */
-  --line-shadow: 0 0 2px rgba(0, 0, 0, 0.5);
-  /* The calendar, which sits on the brightest part of the sky by day: its
-     text's shadow (tight and dark at the letters' edges, with a faint halo,
-     by day; the usual soft glow at night), the faint tint behind it (by day
-     only), and its event blocks' fill, fading down into their color (from
-     the first to the second opacity, top to bottom) */
-  --calendar-text-shadow: 0 0 0.2em rgba(0, 0, 0, 0.7), 0 0 0.5em rgba(0, 0, 0, 0.3);
-  --calendar-scrim: rgba(15, 23, 42, 0.1);
-  --calendar-fill-top: rgba(0, 0, 0, 0.1);
-  --calendar-fill-bottom: rgba(0, 0, 0, 0.4);
+  /* The calendar's text shadow, as it sits on the brightest part of the sky
+     by day: tight and dark at the letters' edges, with a faint halo, by day;
+     the usual soft glow at night */
+  --calendar-text-shadow: 0 0 0.1em rgba(0, 0, 0, 0.7), 0 0 0.5em rgba(0, 0, 0, 0.3);
 }
 
 :root.dark-sky {
-  --control-shadow: 0 0 8px rgba(255, 255, 255, 0.5);
-  --line-shadow: 0 0 4px rgba(255, 255, 255, 0.5);
   --calendar-text-shadow: var(--text-shadow);
-  --calendar-scrim: transparent;
-  --calendar-fill-top: rgba(0, 0, 0, 0);
-  --calendar-fill-bottom: rgba(0, 0, 0, 0.25);
 }
 
-/* The calendar's event blocks' 1px border: their calendar's color by day
-   (--event-color, set by the page), white once the top of the sky is dark */
-.calendar-event,
-.calendar-all-day-event {
-  border: 1px solid var(--event-color);
+/* The sky's light behind the panels, 0 at night to 1 by day, set by the page
+   from the sky's brightness at the middle of the screen (see DarkSkyMarker in
+   App.jsx), which flavors can work their colors out from (as Glass does) */
+:root {
+  --sky-light: 1;
 }
 
-:root.dark-sky .calendar-event,
-:root.dark-sky .calendar-all-day-event {
-  border-color: white;
-}
+/*
+ * UI flavors: how controls, panels and the calendar's blocks look is set by
+ * the flavor chosen in Settings (a class on the page, flavor-default or
+ * flavor-glass, see src/flavors/), each for day and for night (.dark-sky,
+ * set by the page once the top of the sky is dark). Everything here uses
+ * these variables, which each flavor sets:
+ * - --control-background, --control-border, --control-radius,
+ *   --control-shadow, --control-backdrop (a backdrop-filter, where the
+ *   browser has one), --control-active-background (when pressed)
+ * - --corner-button-shadow: the corner buttons' shadow
+ * - --slider-track, --slider-fill, --slider-thumb: sliders' unfilled part,
+ *   filled part and handle
+ * - --line-shadow: thin lines' shadow (the calendar's hour lines)
+ * - --panel-background, --panel-border, --panel-shadow, --panel-backdrop:
+ *   the panel behind the Today section and calendar, and
+ *   --panel-outer-shadow, a shadow under it on its own layer, which is never
+ *   repainted as the panel's colors change
+ * - --event-shadow, --event-backdrop, --calendar-fill-top,
+ *   --calendar-fill-bottom: the calendar's event blocks (their fill fades
+ *   down into their color from the first opacity to the second); their
+ *   borders are set by each flavor directly
+ */
 
 body {
   /* Until the sky is drawn */
@@ -100,18 +109,19 @@ body {
 }
 
 /*
- * Controls look like the rest of the page: white text with the text shadow,
- * on no background, outlined by a soft shadow (--control-shadow) that's dark,
- * or a white glow once the top of the sky is dark (.dark-sky)
+ * Controls: white text with the text shadow, on the flavor's background,
+ * border and shadow (see the UI flavors, above)
  */
 input,
 select,
 textarea,
 button {
-  border: 2px solid transparent;
-  border-radius: 10px;
-  background: transparent;
+  border: var(--control-border);
+  border-radius: var(--control-radius);
+  background: var(--control-background);
   box-shadow: var(--control-shadow);
+  -webkit-backdrop-filter: var(--control-backdrop);
+  backdrop-filter: var(--control-backdrop);
   color: white;
   text-shadow: var(--text-shadow);
   font-family: inherit;
@@ -119,6 +129,95 @@ button {
 
 button {
   cursor: pointer;
+}
+
+/* Controls' side padding (their padding above and below is the browser's
+   own), set for each kind of control, as their insides differ (buttons with
+   icons or their own layout, like the task and corner buttons, set their
+   own): the dropdown's arrow sits in its padding, so it has more at the
+   right, and the time's picker button has its own room, so it has little */
+button {
+  padding-left: 0.6em;
+  padding-right: 0.6em;
+}
+
+/* Buttons' and the dropdown's text raised a pixel (the browser's 1px above
+   and below moved to 0 above, 2px below, so they're no taller): fonts sit a
+   little low in their lines, so this looks better centered */
+button,
+select {
+  padding-top: 0;
+  padding-bottom: 2px;
+}
+
+/* The dropdown draws its own arrow (the browser's is pinned to its edge,
+   whatever its padding): a white chevron --select-arrow-inset in from the
+   right, over the flavor's background, with room left for it */
+:root {
+  --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='white' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  --select-arrow-inset: 0.6em;
+}
+
+select {
+  -webkit-appearance: none;
+  appearance: none;
+  padding-left: 0.5em;
+  padding-right: calc(var(--select-arrow-inset) + 1.3em);
+  background: var(--select-arrow) no-repeat right var(--select-arrow-inset) center / 0.75em auto,
+    var(--control-background);
+}
+
+select:active {
+  background: var(--select-arrow) no-repeat right var(--select-arrow-inset) center / 0.75em auto,
+    var(--control-active-background);
+}
+
+input {
+  padding-left: 0.5em;
+  padding-right: 0.5em;
+}
+
+input[type='time'] {
+  padding-right: 0.2em;
+}
+
+/* Checkboxes, drawn like the other controls (the flavor's background,
+   border and shadow), with a white check when checked */
+input[type='checkbox'] {
+  -webkit-appearance: none;
+  appearance: none;
+  position: relative;
+  flex: none;
+  width: 1.25em;
+  height: 1.25em;
+  margin: 0 0.4em 0 0;
+  padding: 0;
+  border-radius: 0.35em;
+  cursor: pointer;
+}
+
+/* A label holding a checkbox: the box and its text side by side, centered
+   on each other */
+label.checkbox-label {
+  display: inline-flex;
+  align-items: center;
+}
+
+input[type='checkbox']:checked {
+  background: var(--control-active-background);
+}
+
+input[type='checkbox']:checked::after {
+  content: '';
+  position: absolute;
+  left: 34%;
+  top: 14%;
+  width: 26%;
+  height: 50%;
+  border: solid white;
+  border-width: 0 0.15em 0.15em 0;
+  transform: rotate(45deg);
+  filter: drop-shadow(0 0 0.1em rgba(0, 0, 0, 0.6));
 }
 
 /* The tap highlight: the browser's own is a plain rectangle on many phones,
@@ -132,14 +231,18 @@ button {
   transition: background-color 0.3s ease-out;
 }
 
-button:active,
+button:active {
+  background: var(--control-active-background);
+  transition: none;
+}
+
+/* (the dropdown's pressed fill keeps its arrow, see above) */
 select:active {
-  background-color: rgba(255, 255, 255, 0.2);
   transition: none;
 }
 
 button:disabled:active {
-  background-color: transparent;
+  background: var(--control-background);
 }
 
 button:disabled {
@@ -165,19 +268,23 @@ option {
   filter: invert(1) var(--icon-shadow-small);
 }
 
-/* Sliders: the filled part (up to --fill, set by the page) is white with the
-   shadow, and the rest just the shadow outline */
+/* Sliders: the filled part (up to --fill, set by the page) and the rest in
+   the flavor's colors, with its shadow */
 input[type='range'] {
   -webkit-appearance: none;
   height: 16px;
+  padding: 0;
   border: none;
+  background: transparent;
   box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 
 input[type='range']::-webkit-slider-runnable-track {
   height: 4px;
   border-radius: 2px;
-  background: linear-gradient(to right, white var(--fill, 0%), transparent var(--fill, 0%));
+  background: linear-gradient(to right, var(--slider-fill) var(--fill, 0%), var(--slider-track) var(--fill, 0%));
   box-shadow: var(--control-shadow);
 }
 
@@ -187,21 +294,21 @@ input[type='range']::-webkit-slider-thumb {
   height: 14px;
   margin-top: -5px;
   border-radius: 50%;
-  background: white;
+  background: var(--slider-thumb);
   box-shadow: var(--control-shadow);
 }
 
 input[type='range']::-moz-range-track {
   height: 4px;
   border-radius: 2px;
-  background: transparent;
+  background: var(--slider-track);
   box-shadow: var(--control-shadow);
 }
 
 input[type='range']::-moz-range-progress {
   height: 4px;
   border-radius: 2px;
-  background: white;
+  background: var(--slider-fill);
 }
 
 input[type='range']::-moz-range-thumb {
@@ -209,16 +316,34 @@ input[type='range']::-moz-range-thumb {
   height: 14px;
   border: none;
   border-radius: 50%;
-  background: white;
+  background: var(--slider-thumb);
   box-shadow: var(--control-shadow);
 }
 
+/* Settings' rows of controls: wrapping onto more lines when they don't fit
+   (rather than spilling off both sides), centered, with even space around
+   each control */
+.app > p {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  max-width: 100%;
+}
+
+.app > p > * {
+  margin: 0.3em 0.4em;
+}
+
+/* Settings: from the top (centering it up and down would cut its top off
+   once it's taller than the screen), clear of the corner buttons, and
+   growing with what's in it so the page scrolls */
 .app {
-  min-height: 100%;
+  flex: none;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  padding-top: calc(var(--corner-button-size) + var(--corner-inset));
 }
 
 th,
@@ -234,14 +359,14 @@ a {
 /* Buttons in the top corners (styled like every control, see above) */
 .corner-button {
   position: fixed;
-  top: 12px;
+  top: var(--corner-inset);
   z-index: 1;
 }
 
-/* At night (.dark-sky), the corner buttons have no outline, instead of the
-   other controls' white glow */
-:root.dark-sky .corner-button {
-  box-shadow: none;
+/* The corner buttons' shadow, which the flavor sets apart from other
+   controls' (the default has none at night) */
+.corner-button {
+  box-shadow: var(--corner-button-shadow);
 }
 
 /* The corner buttons are squares about the size of the temperature's °F,
@@ -265,17 +390,17 @@ a {
    (an eye, crossed out while hidden), top left, with Fluent icons sized
    (font-size, the icons being 1em) to look as big as the bedtime icon */
 .symbol-button {
-  left: 12px;
+  left: var(--corner-inset);
   font-size: 3.15vw;
 }
 
 /* (to the right of Settings, or in its place while everything is hidden) */
 .visibility-toggle {
-  left: calc(12px + var(--corner-button-size) + var(--corner-button-gap));
+  left: calc(var(--corner-inset) + var(--corner-button-size) + var(--corner-button-gap));
 }
 
 .visibility-toggle.everything-hidden {
-  left: 12px;
+  left: var(--corner-inset);
 }
 
 .corner-icon {
@@ -290,9 +415,385 @@ a {
   filter: var(--icon-shadow-small);
 }
 
+/* The lighting button, left of bedtime, with LightLine's logo ("L|L") */
+.lighting-toggle {
+  right: calc(var(--corner-inset) + var(--corner-button-size) + var(--corner-button-gap));
+  font-size: calc(var(--corner-button-size) * 0.36);
+  font-weight: bold;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+}
+
+.lighting-logo {
+  line-height: 1;
+}
+
+/* The lighting panel, under its button: its right edge on the button's, and
+   as far below it as the buttons are apart, in the panels' style */
+.lighting-panel {
+  position: fixed;
+  z-index: 1;
+  top: calc(var(--corner-inset) + var(--corner-button-size) + var(--corner-button-gap));
+  right: calc(var(--corner-inset) + var(--corner-button-size) + var(--corner-button-gap));
+  box-sizing: border-box;
+  /* From the left edge of the show/hide button (one button in from the
+     left) to its own button's right edge (one in from the right), so it's
+     centered on the page */
+  width: calc(100vw - 2 * (var(--corner-inset) + var(--corner-button-size) + var(--corner-button-gap)));
+  padding: 2vw 2.5vw;
+  border: var(--panel-border);
+  border-radius: 3vw;
+  /* Its glass over the sky's own color where it sits (--sky-top-color, set
+     by the page from the sky), so it looks as if over open sky, bright by
+     day and dark at night, while what's behind it, like the clock, doesn't
+     show through */
+  background: var(--panel-background), var(--sky-top-color, rgb(40, 50, 70));
+  box-shadow: var(--panel-shadow), var(--panel-outer-shadow);
+  -webkit-backdrop-filter: var(--panel-backdrop);
+  backdrop-filter: var(--panel-backdrop);
+  font-size: 4vw;
+  text-shadow: var(--calendar-text-shadow);
+}
+
+/* Its title at the top left, and the power button at the top right */
+.lighting-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.lighting-power {
+  position: relative;
+  flex: none;
+  width: 1.6em;
+  height: 1.6em;
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  font-size: inherit;
+  line-height: 0;
+}
+
+.lighting-power:active,
+.lighting-power:disabled:active {
+  background: transparent;
+}
+
+.lighting-power {
+  /* (the icon's shadow, on the button so its shape doesn't clip it) */
+  filter: var(--icon-shadow-small);
+}
+
+/* The power icon: its shape (a mask) filled white while the lights are on,
+   and while off, as glass: a translucent white, brighter at its top left,
+   with a softer shadow */
+.lighting-power-icon {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: white;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+}
+
+.lighting-power-icon {
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+/* Off: the icon clear, with a glow around it like a drop shadow, but in the
+   panel's own glass gradient (light at its top left, dark at its bottom
+   right): the shape is filled with that gradient, then the glass-halo filter
+   (in index.html) blurs it outward and cuts the shape itself out */
+.lighting-power:not(.on) {
+  filter: url(#glass-halo);
+}
+
+.lighting-power:not(.on) .lighting-power-icon {
+  background: linear-gradient(160deg, var(--panel-fill-light), var(--panel-fill-dark));
+}
+
+/* The brightness sliders, as LightLine's: a glass bar (the controls'
+   background, edge and shadow) filled from the left to the brightness, with
+   a dim sun at its left, the value in its middle and a bright sun at its
+   right; an unseen slider over the whole bar takes the drags */
+.brightness-slider {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-sizing: border-box;
+  height: 1.6em;
+  margin-top: 1.5vw;
+  padding: 0 0.35em;
+  overflow: hidden;
+  border: var(--control-border);
+  border-radius: 0.5em;
+  background: var(--control-background);
+  box-shadow: var(--control-shadow);
+  font-size: 4vw;
+  font-weight: bold;
+  white-space: nowrap;
+}
+
+/* (until its value loads) */
+.brightness-slider.disabled {
+  opacity: 0.5;
+}
+
+.brightness-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  background: var(--control-active-background);
+  pointer-events: none;
+}
+
+.brightness-icon,
+.brightness-value {
+  position: relative;
+  pointer-events: none;
+}
+
+.brightness-icon {
+  width: 1.1em;
+  height: 1.1em;
+  filter: var(--icon-shadow-small);
+}
+
+.brightness-value {
+  font-size: 0.8em;
+}
+
+.brightness-slider input[type='range'] {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+/* The automation rows' slider: smaller, filling the room their other
+   controls leave (at least 8vw) */
+.brightness-slider.small {
+  flex: 1 1 auto;
+  min-width: 8vw;
+  height: 1.5em;
+  margin: 0 0.6em;
+  font-size: inherit;
+}
+
+/* Automation: its title, its rows, and the button to add one */
+.automation {
+  margin-top: 2vw;
+}
+
+.automation-title {
+  margin-bottom: 1vw;
+}
+
+/* Its controls (whose own size is the page's for controls) the size of the
+   row's text (small enough that a whole row fits the screen), and never
+   wrapping */
+.automation-row,
+.automation-row button,
+.automation-row select,
+.automation-row input {
+  font-size: 2.1vw;
+  white-space: nowrap;
+}
+
+/* A row: when (condition, time) at the left, taking the room they need,
+   then the brightness filling what's left, then the power, fade and delete
+   at the right, taking the room they need */
+.automation-row {
+  display: flex;
+  align-items: center;
+  margin-bottom: 1vw;
+}
+
+.automation-start,
+.automation-end {
+  display: flex;
+  flex: none;
+  align-items: center;
+}
+
+/* Spacing with margins, as Chromium 74 (on the Pi 3) has no gap in flex layouts */
+.automation-start > * + *,
+.automation-end > * + * {
+  margin-left: 0.5em;
+}
+
+.automation-offset {
+  display: flex;
+  align-items: center;
+}
+
+.automation-offset input {
+  /* Room for three digits, just short of the up and down arrows */
+  width: calc(3ch + 1.15em);
+  padding-right: 0.15em;
+  margin-right: 0.35em;
+}
+
+.automation-row .lighting-power {
+  width: 1.6em;
+  height: 1.6em;
+}
+
+/*
+ * Steppers (see Stepper in App.jsx): set by touch, as the Pi 3 has no
+ * on-screen keyboard or time picker. A control's glass pill holding the
+ * value between − and + arrows; the arrows are plain, filling briefly when
+ * pressed.
+ */
+.stepper {
+  display: inline-flex;
+  align-items: center;
+  border: var(--control-border);
+  border-radius: var(--control-radius);
+  background: var(--control-background);
+  box-shadow: var(--control-shadow);
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.stepper-arrow {
+  flex: none;
+  width: 1.4em;
+  height: 1.6em;
+  padding: 0;
+  border: none;
+  border-radius: var(--control-radius);
+  background: transparent;
+  box-shadow: none;
+  font-size: 1.15em;
+  font-weight: bold;
+  line-height: 1;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.stepper-value {
+  padding: 0 0.15em;
+  text-align: center;
+}
+
+/* Times and minute offsets held to the same width (the widest of either,
+   "12:00 am" or "-720 min"), so the arrows don't move as they change and
+   rows line up whichever they show */
+.time-stepper .stepper-value,
+.number-stepper .stepper-value {
+  width: 4.6em;
+}
+
+.number-stepper-number {
+  display: inline-block;
+  min-width: 2ch;
+  text-align: right;
+}
+
+.number-stepper-unit {
+  margin-left: 0.3em;
+  opacity: 0.85;
+}
+
+/* Fade to next: a toggle with a down arrow, filled while on, and while off,
+   clear with a slash across the arrow */
+.automation-fade {
+  position: relative;
+  padding-left: 0.55em;
+  padding-right: 0.55em;
+}
+
+.automation-fade.active {
+  background: var(--control-active-background);
+}
+
+.automation-fade-arrow {
+  position: relative;
+  display: inline-block;
+}
+
+.automation-fade:not(.active) .automation-fade-arrow {
+  opacity: 0.7;
+}
+
+.automation-fade:not(.active) .automation-fade-arrow::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 1.3em;
+  height: 0.12em;
+  margin: -0.06em 0 0 -0.65em;
+  border-radius: 0.06em;
+  background: white;
+  box-shadow: 0 0 0.15em rgba(0, 0, 0, 0.5);
+  transform: rotate(-45deg);
+}
+
+/* The delete and add buttons: round, with their icons */
+.automation-delete,
+.automation-add {
+  position: relative;
+  flex: none;
+  width: 1.6em;
+  height: 1.6em;
+  padding: 0;
+  border-radius: 50%;
+  line-height: 0;
+}
+
+.automation-delete img,
+.automation-add img {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 62%;
+  height: 62%;
+  transform: translate(-50%, -50%);
+  filter: var(--icon-shadow-small);
+}
+
+.automation-add-row {
+  display: flex;
+  justify-content: center;
+  margin-top: 0.5vw;
+}
+
+/* (the same size as the calendar's refresh button) */
+.automation-add {
+  width: 4vw;
+  height: 4vw;
+}
+
+.automation-add img {
+  width: 70%;
+  height: 70%;
+}
+
+.lighting-error {
+  margin-top: 1vw;
+  font-size: 0.7em;
+  opacity: 0.8;
+}
+
 /* Bedtime, top right, its icon 25% bigger than the button */
 .bedtime-toggle {
-  right: 12px;
+  right: var(--corner-inset);
 }
 
 .bedtime-toggle img {
@@ -308,10 +809,18 @@ a {
   filter: var(--icon-shadow-small);
 }
 
+/* The space above the Today section, and above its title within it; the
+   panel behind the Today section and calendar starts 1.5vw above the title,
+   so it follows these (see .today-and-calendar::before) */
+:root {
+  --today-margin-top: 5vw;
+  --today-title-margin-top: 4vw;
+}
+
 /* Today's tasks, under the weather: a title, then a button for each task.
    Icons are white while not done, and recolored once done. */
 .today {
-  margin-top: 6vw;
+  margin-top: var(--today-margin-top);
   text-align: center;
   font-size: 6.5vw;
 }
@@ -324,52 +833,71 @@ a {
 }
 
 .today-title {
-  margin-top: 4vw;
+  margin-top: var(--today-title-margin-top);
   margin-bottom: 1.5vw;
   text-align: center;
   white-space: nowrap;
 }
 
-/* The title and its arrows, in a row centered on each other */
+/* The calendar's columns, which the title's arrows and the calendar's
+   refresh button are pinned to (in vw from the calendar's left edge, as it's
+   84vw wide and centered): its hour labels end 10.5vw in and are up to 7.07vw
+   wide ("12 am", always shown, measured on the Pi 3), so they start at
+   --calendar-labels-left and are centered on --calendar-labels-middle; its
+   events end 72vw in (12vw from its right). */
+:root {
+  --calendar-labels-left: 3.43vw;
+  --calendar-labels-middle: 6.97vw;
+  --calendar-events-right: 72vw;
+}
+
+/* The title row, as wide as the calendar and lined up with it, with the
+   title centered and its arrows pinned to the calendar's columns (so they
+   don't move as the title or the calendar's contents change) */
 .today-title {
+  position: relative;
   display: flex;
   justify-content: center;
   align-items: center;
+  width: 84vw;
+  margin-left: calc(50% - 42vw);
 }
 
 /* The arrows either side of the title, which change the calendar's day:
-   just their icons, the title's size (buttons don't take the text size
-   around them by themselves). The chevrons' drawings are 0.67 of their
-   height and leave about a third of their width empty on the side facing
-   the title. They're 0.75 of the title's size, with margin on the side
-   facing it leaving about 0.49em (34px on the Pi 3) between the drawing and
-   the text. */
+   just their icons, 0.75 of the title's size (buttons don't take the text
+   size around them by themselves). The left one is centered over the hour
+   labels (and so over the refresh button), and the right one as far in from
+   the panel's right edge as the left one is from its left edge. Up and down, they're centered on the row, lowered from the middle
+   of the capitals to the word's visual middle, between them and the middle
+   of the lowercase letters (measured on the Pi 3, as the capitals' middle
+   looks too high). */
 .day-arrow {
-  flex: none;
+  position: absolute;
+  top: calc(50% + 0.09em);
   width: 0.75em;
   height: 0.75em;
+  margin: -0.375em 0 0 -0.375em;
   padding: 0;
   border: none;
   box-shadow: none;
   font-size: inherit;
   line-height: 0;
-  /* Lowered from the middle of the capitals to the word's visual middle,
-     between them and the middle of the lowercase letters (measured on the
-     Pi 3, as the capitals' middle looks too high) */
-  position: relative;
-  top: 0.09em;
 }
 
-.day-arrow:first-child {
-  margin-right: 0.23em;
+.day-arrow.back {
+  left: var(--calendar-labels-middle);
 }
 
-.day-arrow:last-child {
-  margin-left: 0.23em;
+.day-arrow.on {
+  /* (mirroring the left one, as the panel is centered on the calendar) */
+  left: calc(84vw - var(--calendar-labels-middle));
 }
 
+.day-arrow,
 .day-arrow:active {
-  background-color: transparent;
+  background: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 
 .day-arrow img {
@@ -382,10 +910,19 @@ a {
   line-height: 1.15;
 }
 
+/* On days other than today and yesterday, the tasks show what was done but
+   can't be changed: greyed out, and not tappable */
+.today-tasks.locked {
+  opacity: 0.5;
+  filter: grayscale(1);
+  pointer-events: none;
+}
+
 .today-tasks {
   display: flex;
   /* (centered under the title, however wide the title is) */
   justify-content: center;
+  margin-top: 3vw;
 }
 
 /* Spacing with margins, as Chromium 74 (on the Pi 3) has no gap in flex layouts */
@@ -407,11 +944,16 @@ a {
   box-shadow: none;
 }
 
-/* No tap highlight on tasks: tapping one celebrates instead (see below) */
+/* No background, outline or tap highlight on tasks, whatever the flavor:
+   tapping one celebrates instead (see below) */
 .task,
 .task:active {
   position: relative;
-  background-color: transparent;
+  /* (the 2px they've always had, so their layout is the same in every flavor) */
+  border: 2px solid transparent;
+  background: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 
 /* A task's contents, which pop when it's tapped */
@@ -515,7 +1057,7 @@ a {
   display: inline-block;
   vertical-align: middle;
   line-height: 0;
-  filter: var(--icon-shadow-small);
+  filter: var(--icon-shadow-medium);
 }
 
 .task-icon {
@@ -541,6 +1083,35 @@ a {
    drawings (each cup's drawing is 0.35 of its 4em width, centered) */
 .task-second-cup {
   margin-left: -0.6em;
+}
+
+/* Shown under a task button, centered, out of the layout (so nothing
+   moves), and not tappable itself */
+.task-below {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.6em;
+  line-height: 1.2;
+  white-space: nowrap;
+  text-shadow: var(--calendar-text-shadow);
+  pointer-events: none;
+}
+
+/* The sleep estimate: green from 7 hours (as the 7 once sleep's done),
+   orange under it, and red and bold more than an hour under it */
+.sleep-estimate.ok {
+  color: #22c55e;
+}
+
+.sleep-estimate.short {
+  color: #f97316;
+}
+
+.sleep-estimate.low {
+  color: #ef4444;
+  font-weight: bold;
 }
 
 /* The 7 of 7 hours' sleep, beside the bed and centered on it, the size of the
@@ -578,7 +1149,7 @@ a {
   display: flex;
   flex-direction: column;
   width: 84vw;
-  margin: 2vw auto 0;
+  margin: 1vw auto 0;
   font-size: 3vw;
 }
 
@@ -587,6 +1158,17 @@ a {
    layer so the tint below goes behind everything in it */
 .today-and-calendar {
   position: relative;
+  /* Room below, so the panel's bottom is as far from the screen's bottom as
+     its sides are from the screen's sides: the page's side padding, the
+     calendar's 4vw inset and its labels' start, less the panel's side gap;
+     less the page's bottom padding and the panel's own reach below this */
+  margin-bottom: calc(
+    var(--page-padding-x) + 4vw + var(--calendar-labels-left) - var(--panel-gap-x) - var(--page-padding-bottom) +
+      var(--panel-gap-y)
+  );
+  /* (extra room inside the panel below the calendar, which the calendar
+     gives up, so the panel's bottom stays put; see --panel-gap-bottom) */
+  padding-bottom: calc(var(--panel-gap-bottom) - var(--panel-gap-y));
   z-index: 0;
   display: flex;
   flex-direction: column;
@@ -597,26 +1179,66 @@ a {
   min-height: 0;
 }
 
-/* The faint tint behind the Today title, tasks and calendar by day
-   (--calendar-scrim): a rounded panel from just above the title (which is
-   6vw + 4vw down, the Today section's and title's top margins) to just below
-   the calendar, as wide as the calendar (84vw, centered) and a little more,
-   its edges softened into the sky */
-.today-and-calendar::before {
+/* The panel behind the Today title, tasks and calendar, in the flavor's
+   style (see the UI flavors, above): rounded, from --panel-gap-y above the
+   title (--today-margin-top + --today-title-margin-top down, the Today
+   section's and title's top margins) to --panel-gap-y below the calendar,
+   and from --panel-gap-x left of the hour labels (which start
+   --calendar-labels-left into the calendar, itself 4vw in, as it's 84vw
+   centered in 92vw) to as far right, centered on the calendar */
+:root {
+  --panel-gap-x: 2.7vw;
+  --panel-gap-y: 1.5vw;
+  /* (the space below the calendar inside the panel, more than above the
+     title) */
+  --panel-gap-bottom: 3vw;
+}
+
+.today-and-calendar::before,
+.today-and-calendar::after {
   content: '';
   position: absolute;
-  top: calc(6vw + 4vw - 1.5vw);
-  right: 2vw;
-  bottom: -1.5vw;
-  left: 2vw;
-  z-index: -1;
+  top: calc(var(--today-margin-top) + var(--today-title-margin-top) - var(--panel-gap-y));
+  right: calc(4vw + var(--calendar-labels-left) - var(--panel-gap-x));
+  bottom: calc(-1 * var(--panel-gap-y));
+  left: calc(4vw + var(--calendar-labels-left) - var(--panel-gap-x));
   border-radius: 3vw;
-  background: var(--calendar-scrim);
-  box-shadow: 0 0 3vw 1.5vw var(--calendar-scrim);
+  pointer-events: none;
+}
+
+/* The panel's shadow, under it on its own layer, so it isn't repainted when
+   the panel's colors change with the light (see --panel-outer-shadow) */
+.today-and-calendar::after {
+  z-index: -2;
+  box-shadow: var(--panel-outer-shadow);
+}
+
+.today-and-calendar::before {
+  z-index: -1;
+  box-sizing: border-box;
+  border: var(--panel-border);
+  border-radius: 3vw;
+  background: var(--panel-background);
+  box-shadow: var(--panel-shadow);
+  -webkit-backdrop-filter: var(--panel-backdrop);
+  backdrop-filter: var(--panel-backdrop);
   pointer-events: none;
 }
 
 .calendar-none {
+  text-shadow: var(--calendar-text-shadow);
+}
+
+/* "Coming up tomorrow", between the tasks and the calendar, while Today
+   shows tomorrow's events late at night (see PEEK_TOMORROW_HOUR in App.jsx) */
+/* (spaced, as "No more events" is, so its text starts as far below what's
+   above it, the daily task buttons' drawings or the last Google Task, as
+   the first task is below the buttons: 41px on the Pi 3, see the end) */
+.calendar-subtitle {
+  margin-top: 0.93vw;
+  margin-bottom: 1vw;
+  text-align: center;
+  font-size: 3.5vw;
   text-shadow: var(--calendar-text-shadow);
 }
 
@@ -633,7 +1255,9 @@ a {
   margin-bottom: 1vw;
   padding: 0.6vw 1.5vw;
   border-radius: 1vw;
-  box-shadow: var(--control-shadow);
+  box-shadow: var(--event-shadow);
+  -webkit-backdrop-filter: var(--event-backdrop);
+  backdrop-filter: var(--event-backdrop);
   font-weight: bold;
   overflow: hidden;
   white-space: nowrap;
@@ -696,11 +1320,13 @@ a {
   box-sizing: border-box;
   padding: var(--calendar-padding) 1vw;
   /* See-through but for a fill fading into its calendar's color (see
-     .calendar-event-fill), with a 1px border (see above;
-     CALENDAR_EVENT_BORDER_PX in App.jsx) and the controls' shadow */
+     .calendar-event-fill), with the flavor's 1px border
+     (CALENDAR_EVENT_BORDER_PX in App.jsx), shadow and backdrop */
   border-radius: 0.8vw;
   overflow: hidden;
-  box-shadow: var(--control-shadow);
+  box-shadow: var(--event-shadow);
+  -webkit-backdrop-filter: var(--event-backdrop);
+  backdrop-filter: var(--event-backdrop);
 }
 
 .calendar-event-title {
@@ -721,9 +1347,168 @@ a {
   opacity: 0.9;
 }
 
+/* An event running past the end of the view: drawn --calendar-continue
+   further (into the room below the hours, inside the panel), with square
+   bottom corners, fading out over its last --calendar-continue-fade, as if it
+   carries on */
+:root {
+  --calendar-continue: 2vw;
+  --calendar-continue-fade: 5vw;
+}
+
+.calendar-event.continues {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+  -webkit-mask-image: linear-gradient(to bottom, black calc(100% - var(--calendar-continue-fade)), transparent);
+  mask-image: linear-gradient(to bottom, black calc(100% - var(--calendar-continue-fade)), transparent);
+}
+
+/* Each event's colored edge, for flavors that use one in place of a border
+   (see src/flavors/glass.css): a 1px outline around its inside (as the block
+   clips anything beyond that) in its calendar's color (--event-color), made
+   see-through by the flavor's opacity; hidden otherwise */
+.calendar-event-edge {
+  display: none;
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--event-color);
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+/* Google Tasks, under the daily task buttons and above the calendar, as
+   wide as the calendar's events and lined up with them: each a glass row
+   (the controls' background and edge) with a circle and the title ("overdue"
+   small after it), tapped to complete; once done, a green check in the
+   circle (the green of the done 7), the title dimmed, and drawn as a
+   calendar event is, in that green (a fill fading into it, and the flavor's
+   edge and shadow for events) */
+.google-tasks {
+  width: calc(84vw - 24vw);
+  margin: 2vw auto 0;
+  font-size: 3vw;
+  text-shadow: var(--calendar-text-shadow);
+}
+
+.calendar-task {
+  position: relative;
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  width: 100%;
+  margin-bottom: 1vw;
+  padding: 0.5vw 1.5vw;
+  border: var(--control-border);
+  border-radius: 1vw;
+  background: var(--control-background);
+  box-shadow: var(--control-shadow);
+  font-size: inherit;
+  /* (the calendar's text shadow, as buttons otherwise set the page's) */
+  text-shadow: var(--calendar-text-shadow);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.calendar-task:active {
+  background: var(--control-background);
+}
+
+.calendar-task.done,
+.calendar-task.done:active {
+  background: transparent;
+  box-shadow: var(--event-shadow);
+  cursor: default;
+}
+
+/* (the event-style fill rounded as the row is, rather than the row clipping
+   it, which would clip the burst too) */
+.calendar-task .calendar-event-fill {
+  border-radius: inherit;
+}
+
+/* (its contents over the event-style fill) */
+.calendar-task-check-place,
+.calendar-task-title,
+.calendar-task-note {
+  position: relative;
+}
+
+.calendar-task-check-place {
+  position: relative;
+  flex: none;
+  margin-right: 0.5em;
+  line-height: 0;
+}
+
+.calendar-task-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 1em;
+  height: 1em;
+  border: 0.12em solid white;
+  border-radius: 50%;
+  font-size: 0.9em;
+  font-weight: bold;
+  line-height: 1;
+}
+
+/* The check, small enough to sit inside the circle, just clear of its edge */
+.calendar-task-checkmark {
+  font-size: 0.9em;
+  line-height: 1;
+}
+
+.calendar-task.done .calendar-task-check {
+  border-color: #22c55e;
+  color: #22c55e;
+}
+
+/* The burst on the circle (the daily tasks', see .task-burst), sized to it */
+.calendar-task-burst {
+  font-size: 0.45em;
+}
+
+.calendar-task-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* (room inside its clipping for the text's shadow) */
+  padding: 0.3em;
+  margin: -0.3em;
+}
+
+.calendar-task.done .calendar-task-title {
+  opacity: 0.7;
+}
+
+.calendar-task-note {
+  flex: none;
+  margin-left: 0.6em;
+  font-size: 0.75em;
+  color: #fdba74;
+}
+
+/* Emoji pictures in text (see EmojiText in App.jsx): the size of the text's
+   emoji, sitting on its line as an emoji character would, with a shadow
+   like the text around them */
+img.emoji {
+  display: inline-block;
+  width: 1.2em;
+  height: 1.2em;
+  margin: 0 0.05em;
+  vertical-align: -0.25em;
+  /* (pictures take no text shadow, so the icons' small shadow instead) */
+  filter: var(--icon-shadow-small);
+}
+
 /* Each event's fill: its calendar's color (set by the page), faded from
-   --calendar-fill-top to --calendar-fill-bottom (10% to 40% by day, none to
-   25% at night), drawn behind its text */
+   --calendar-fill-top to --calendar-fill-bottom (set by the flavor), drawn
+   behind its text */
 .calendar-event-fill {
   position: absolute;
   top: 0;
@@ -781,7 +1566,7 @@ a {
 /* In place of the calendar when there are no events left */
 .calendar-none {
   width: 84vw;
-  margin: 5vw auto 4vw;
+  margin: 1.2vw auto 4vw;
   text-align: center;
   font-size: 3vw;
 }
@@ -797,24 +1582,13 @@ a {
    daily task buttons (measured by the page). */
 .calendar-refresh-place {
   position: absolute;
+  width: 0;
   height: 0;
   line-height: 0;
 }
 
 .calendar-refresh-place.beside-tasks {
-  right: calc(100% - 10.5vw);
-}
-
-.calendar-refresh-place.beside-all-day {
-  top: 50%;
-  right: 100%;
-  margin-right: 1.5vw;
-}
-
-.calendar-refresh-label {
-  visibility: hidden;
-  font-size: 0.85em;
-  white-space: nowrap;
+  left: var(--calendar-labels-middle);
 }
 
 .calendar-all-day-row {
@@ -939,6 +1713,15 @@ a {
   z-index: -1;
 }
 
+/* The moon, on a canvas just its size, which the renderer places (see
+   showLayers in SkyCanvas.jsx) */
+.sky-moon {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: -1;
+}
+
 /*
  * The main weather display, sized to the screen's width (it's laid out for a
  * portrait screen), in rows: the date; the time; the weather icon beside the
@@ -957,13 +1740,30 @@ a {
 
 /* The time, with the last sunrise or sunset on its left and the next on its
    right, each its time with its icon underneath */
+/* The time row and the forecast row under it reach out past the page's
+   padding to --edge-row-inset from the screen's edges: twice as far as the
+   corner buttons (--corner-inset) */
+:root {
+  --corner-inset: 12px;
+  --edge-row-inset: calc(2 * var(--corner-inset));
+}
+
+/* The time, centered, between the last sunrise or sunset at the far left
+   and the next at the far right (each in an equal share of the room either
+   side, so the time stays centered whatever their widths) */
 .time-row {
   display: flex;
   align-items: center;
-  /* The sun events at the far sides; as they're the same width, the time
-     stays centered */
-  justify-content: space-between;
-  margin-top: 3vw;
+  margin: 3vw calc(var(--edge-row-inset) - var(--page-padding-x)) 0;
+}
+
+.time-row-side {
+  display: flex;
+  flex: 1 1 0;
+}
+
+.time-row-side.end {
+  justify-content: flex-end;
 }
 
 .weather-time {
@@ -974,7 +1774,6 @@ a {
   display: flex;
   flex-direction: column;
   align-items: center;
-  width: 16vw;
   font-size: 4vw;
 }
 
@@ -984,16 +1783,10 @@ a {
 .forecast-row {
   display: flex;
   justify-content: flex-end;
-  margin-top: 1vw;
+  /* (out to the same edge as the time row, so the forecast's right edge is
+     the next sun event's) */
+  margin: 1vw calc(var(--edge-row-inset) - var(--page-padding-x)) 0;
   font-size: 4vw;
-}
-
-/* As wide as a sun event and at the same place, so the forecast is centered
-   under it (spilling out evenly on both sides if wider) */
-.forecast-slot {
-  display: flex;
-  justify-content: center;
-  width: 16vw;
 }
 
 /* The forecast until the next sun event, in a row: the high over
@@ -1089,7 +1882,7 @@ a {
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-top: 2vw;
+  margin-top: 0vw;
   margin-bottom: 2vw;
   /* The temperature's size, which the weather icon is sized and spaced by */
   font-size: 12vw;
@@ -1142,6 +1935,14 @@ a {
 
 /* The number and °F, centered on each other, so they're what's centered;
    the number sets the height humidity and wind stretch to */
+/* The condition over the temperature, stacked at the left, centered up and
+   down on the weather icon as one (as the row centers its items) */
+.weather-now-middle {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
 .weather-temperature {
   position: relative;
   display: flex;
@@ -1247,16 +2048,21 @@ a {
   filter: var(--icon-shadow-small);
 }
 
+/* The condition, above the temperature's number and starting where it
+   does, running on to the right as far as it needs (taking no width, so the
+   number and °F stay centered) */
 .weather-condition {
+  width: 0;
   margin-top: 0vw;
-  margin-bottom: -2.5vw;
+  margin-bottom: -1vw;
   font-size: 6.5vw;
+  white-space: nowrap;
 }
 
 .weather-details {
   display: flex;
   justify-content: center;
-  margin-top: -2vw;
+  margin-top: -1vw;
   font-size: 4vw;
 }
 
@@ -1399,4 +2205,14 @@ a {
 .icon-spacing-field input {
   width: 4.5em;
   font-size: 12px;
+}
+
+/* After the Google Tasks, the subtitle and "No more events" start as far
+   below the last task as the first task is below the daily task buttons */
+.google-tasks + .calendar-subtitle {
+  margin-top: 1.69vw;
+}
+
+.google-tasks + .calendar-none {
+  margin-top: 1.96vw;
 }

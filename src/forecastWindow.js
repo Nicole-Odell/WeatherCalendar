@@ -1,6 +1,7 @@
-// Precipitation counted as "any" in a time span, as for Open-Meteo's own
-// precipitation probability (mm)
-const ANY_PRECIPITATION = 0.1;
+// Precipitation counted as "any" in a time span (mm): 0.01 in, the smallest
+// measurable amount, as the National Weather Service's chance of
+// precipitation uses
+const ANY_PRECIPITATION = 0.254;
 
 /*
  * The forecast for a span of time, from /api/forecast's data (all times in

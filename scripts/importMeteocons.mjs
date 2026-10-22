@@ -31,6 +31,10 @@ const CUSTOM_FILL_ICONS = [
   'starry-night',
 ];
 const OTHER_FILL_ICONS = [
+  // A clear sky's icon in the twilight after sunset and before sunrise (the
+  // white versions are the sun events')
+  'sunrise',
+  'sunset',
   // The forecast's precipitation icons
   'raindrop',
   'raindrops',

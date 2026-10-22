@@ -1,0 +1,96 @@
+/*
+ * The "Glass" UI flavor (glassmorphism, see the UI flavors in index.css):
+ * controls, the panel behind the Today section and calendar, and the
+ * calendar's blocks as panes of frosted glass: translucent, lighter at their
+ * top left, with a thin bright edge, a soft shadow beneath and a highlight
+ * along their top. The sky behind them isn't blurred (backdrop-filter),
+ * as the Pi 3's Chromium 74 can't, so every screen shows the glass as it
+ * looks there.
+ *
+ * The glass is lit from behind by the sky: its colors are worked out from
+ * --sky-light (0 at night to 1 by day, set by the page from the sky's
+ * brightness), so they fade smoothly with it rather than switching at
+ * night. At full light the glass is tinted slightly dark, so white text
+ * still reads over the bright sky; with none, it's clear, with faint edges.
+ * Each value goes from its night value (at 0) to its day value (at 1). The
+ * panel's shadow is fixed, on its own layer, so it isn't repainted as the
+ * light changes (it fades from sight on its own as the sky darkens).
+ */
+:root.flavor-glass {
+  --control-background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, calc(0.12 + 0.18 * var(--sky-light))),
+    rgba(255, 255, 255, calc(0.04 + 0.06 * var(--sky-light)))
+  );
+  --control-border: 1px solid rgba(255, 255, 255, calc(0.22 + 0.33 * var(--sky-light)));
+  --control-radius: 12px;
+  --control-shadow: 0 4px 16px
+    rgba(
+      calc(15 * var(--sky-light)),
+      calc(23 * var(--sky-light)),
+      calc(42 * var(--sky-light)),
+      calc(0.4 - 0.25 * var(--sky-light))
+    );
+  --control-backdrop: none;
+  --control-active-background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, calc(0.25 + 0.25 * var(--sky-light))),
+    rgba(255, 255, 255, calc(0.1 + 0.15 * var(--sky-light)))
+  );
+  --corner-button-shadow: var(--control-shadow);
+  --slider-track: rgba(255, 255, 255, calc(0.18 + 0.17 * var(--sky-light)));
+  --slider-fill: rgba(255, 255, 255, calc(0.85 + 0.15 * var(--sky-light)));
+  --slider-thumb: rgba(255, 255, 255, calc(0.9 + 0.1 * var(--sky-light)));
+  --line-shadow: 0 0 calc(3px - 1px * var(--sky-light))
+    rgba(
+      calc(15 * var(--sky-light)),
+      calc(23 * var(--sky-light)),
+      calc(42 * var(--sky-light)),
+      calc(0.6 - 0.25 * var(--sky-light))
+    );
+  /* The panel's parts (its gradient's two ends, its edge, and the highlight
+     along its top), which the panel and the off power icon (a hollow, see
+     index.css) are made from */
+  --panel-fill-light: rgba(255, 255, 255, calc(0.1 + 0.15 * var(--sky-light)));
+  --panel-fill-dark: rgba(
+    calc(255 - 225 * var(--sky-light)),
+    calc(255 - 214 * var(--sky-light)),
+    calc(255 - 196 * var(--sky-light)),
+    calc(0.03 + 0.09 * var(--sky-light))
+  );
+  --panel-edge-color: rgba(255, 255, 255, calc(0.18 + 0.32 * var(--sky-light)));
+  --panel-highlight-color: rgba(255, 255, 255, calc(0.15 + 0.45 * var(--sky-light)));
+  --panel-background: linear-gradient(160deg, var(--panel-fill-light), var(--panel-fill-dark));
+  --panel-border: 1px solid var(--panel-edge-color);
+  /* (just the highlight along its top; its shadow is below) */
+  --panel-shadow: inset 0 1px 0 var(--panel-highlight-color);
+  --panel-outer-shadow: 0 8px 32px rgba(15, 23, 42, 0.25);
+  --panel-backdrop: none;
+  --event-shadow: 0 4px 12px
+      rgba(
+        calc(15 * var(--sky-light)),
+        calc(23 * var(--sky-light)),
+        calc(42 * var(--sky-light)),
+        calc(0.35 - 0.2 * var(--sky-light))
+      ),
+    inset 0 1px 0 rgba(255, 255, 255, calc(0.15 + 0.3 * var(--sky-light)));
+  --event-backdrop: none;
+  --calendar-fill-top: rgba(0, 0, 0, calc(0.05 + 0.1 * var(--sky-light)));
+  --calendar-fill-bottom: rgba(0, 0, 0, calc(0.3 + 0.15 * var(--sky-light)));
+}
+
+/* The calendar's blocks: an edge of translucent glass in their calendar's
+   color (an outline just inside them in place of a border, see
+   .calendar-event-edge in index.css, at this opacity, as the Pi 3's browser
+   can't make any color see-through itself), with the glass highlight along
+   their top (see --event-shadow) */
+:root.flavor-glass .calendar-event,
+:root.flavor-glass .calendar-all-day-event,
+:root.flavor-glass .calendar-task.done {
+  border: none;
+}
+
+:root.flavor-glass .calendar-event-edge {
+  display: block;
+  opacity: calc(0.5 + 0.2 * var(--sky-light));
+}

@@ -22,17 +22,32 @@ const RENDER_SCALE = 0.25;
 // The moon: its radius as a share of the screen's height, and the distance
 // from the right of the screen to its right edge as a share of the screen's
 // width. Its height follows its altitude, from its center on the bottom of the
-// screen (the horizon) at 0° to its top edge at the top of the screen at 90°.
-const MOON_RADIUS = 0.05;
+// screen (the horizon) at 0° to its top edge at the top of the screen at MOON_TOP_ALTITUDE.
+const MOON_RADIUS = 0.0375;
 const MOON_FROM_RIGHT = 0.1;
 // Altitude (degrees) the moon is shown at until the server has given one
 const DEFAULT_MOON_ALTITUDE = 45;
+// The moon's altitude (degrees) shown at the top of the screen, with the
+// horizon at the bottom (here, at 47.65° N, it never gets above about 70°)
+const MOON_TOP_ALTITUDE = 80;
 // As the moon rises and sets, it's only drawn again once it has moved this
 // many pixels (or the sky or its settings change); until then the drawing
 // just moves with it
 const MOON_REDRAW_MOVE = 8;
+// The sky is painted (fades shown, the canvases updated) at most this often
+// (ms): 30 times a second, every other frame of the display. Each paint has
+// the browser composite the whole screen again, which is the Pi 3's limit,
+// so painting half as often keeps frames steady rather than spiking.
+const PAINT_INTERVAL = 1000 / 30;
+// (frames come every 16.7 ms, so a frame this much early still counts)
+const PAINT_SLACK = 4;
+
 // Width in pixels the star glow is drawn at before being smoothed up
 const STAR_GLOW_WIDTH = 240;
+// In twilight, when the stars change with the sky, they're worked out again
+// at most this often (ms): they change too slowly to see in between, and
+// working them out takes a while on the Pi 3
+const STAR_TWILIGHT_INTERVAL = 5000;
 // How often a new frame of cloud motion is drawn (ms), faded in over the same time
 const CLOUD_INTERVAL = 250;
 // The clouds are drawn with WebGL (with motion) if the GPU draws a cloud frame
@@ -50,17 +65,23 @@ const MOON_ANGLE_STEP = 0.5;
 const CPU_RECOLOR_STEP = 1;
 
 /**
- * Draws the sky, stars, clouds and haze on three canvases stacked with normal
- * blending, either on the page or on a worker thread (see skyWorker.js):
- * 1. `background`: the sky, with the stars added over it with a screen blend,
- *    and the moon over them (see renderMoon)
- * 2. `clouds`: the cloud layers, drawn with WebGL if the GPU is fast enough,
+ * Draws the sky, stars, moon, clouds, haze and rain or snow on canvases the
+ * page stacks, either on the page or on a worker thread (see skyWorker.js).
+ * Each changes only when what it shows does, as every change has the
+ * browser composite the screen again, which is slow on the Pi 3:
+ * 1. `sky`: the sky, a column 1 pixel wide that the page stretches
+ * 2. `stars`: the stars and their glow, at full resolution, over the sky
+ *    with plain transparency (see drawStars); only redrawn when they change
+ * 3. `moon`: the moon and its glow, on a canvas just its size that the page
+ *    places (see reportLayers; its colors already include the sky's light)
+ * 4. `clouds`: the cloud layers, drawn with WebGL if the GPU is fast enough,
  *    otherwise on the CPU (see cpuClouds.js)
- * 3. `haze`: the haze, a column 1 pixel wide that the page stretches
- * 4. `precipitation`: rain and snow, moving particles drawn every
+ * 5. `haze`: the haze, a column 1 pixel wide that the page stretches
+ * 6. `precipitation`: rain and snow, moving particles drawn every
  *    PRECIPITATION_INTERVAL ms while there's any (see precipitation.js)
- * `createCanvas()` makes an off-screen canvas for drawing the sky and stars
- * into. `report(message)` passes back { status } (renderer and timings).
+ * `createCanvas()` makes an off-screen canvas for working in.
+ * `report(message)` passes back { status } (renderer and timings) and
+ * { layers } (see reportLayers).
  * `forceCpuClouds` draws the clouds on the CPU even if WebGL is fast enough.
  *
  * Each redraw fades in from what's showing. Only pixels that differ between
@@ -82,12 +103,12 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
     : (id) => clearTimeout(id);
 
   const state = {
-    sky: createLayer(createCanvas()),
+    sky: createLayer(canvases.sky),
     haze: createLayer(canvases.haze),
     // The stars shown, their colors, glow and key (to tell when they change)
     // (the glow is drawn on its own canvas, kept to be reused)
     stars: {
-      canvas: createCanvas(),
+      canvas: canvases.stars,
       glowCanvas: createCanvas(),
       colors: null,
       glow: null,
@@ -101,7 +122,7 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
       picture: null,
       image: null,
       pixels: null,
-      canvas: createCanvas(),
+      canvas: canvases.moon,
       left: 0,
       top: 0,
       key: null,
@@ -127,6 +148,8 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
     animating: false,
     animationTimer: 0,
     animationFrame: 0,
+    // When the sky was last painted (ms, see PAINT_INTERVAL)
+    paintedAt: -Infinity,
     // Rain and snow, and the timer drawing them while there's any (and the
     // time it last drew, in ms)
     precipitation: createPrecipitation(canvases.precipitation),
@@ -134,12 +157,49 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
     precipitationDrawn: 0,
     // The latest scene: settings, windowSize and fadeDuration
     props: null,
+    // What the page was last told about its canvases (see reportLayers)
+    layersReported: null,
   };
 
-  // Shows each fade as of now, continuing each animation frame until they're done
+  /*
+   * Tells the page (with `report({ layers })`) how to show the canvases it
+   * places itself, when that changes: whether the stars, moon, clouds and
+   * rain or snow have anything to show (so empty full-screen canvases are hidden rather than
+   * composited), and where the moon's canvas goes (in CSS pixels, its top
+   * left and size)
+   */
+  function reportLayers() {
+    const { stars, moon } = state;
+    const { pixelRatio } = state.props.windowSize;
+    const { low, mid, high } = state.props.settings.clouds;
+    const layers = {
+      stars: stars.key !== 'day' && stars.key !== undefined,
+      clouds: low > 0 || mid > 0 || high > 0,
+      precipitation: state.precipitation.active(),
+      moon:
+        moon.key !== null
+          ? { left: moon.left / pixelRatio, top: moon.top / pixelRatio, size: moon.canvas.width / pixelRatio }
+          : null,
+    };
+    const text = JSON.stringify(layers);
+    if (text === state.layersReported) return;
+    state.layersReported = text;
+    report({ layers });
+  }
+
+  // Shows each fade as of now, continuing each animation frame until they're
+  // done, at most every PAINT_INTERVAL (waiting a frame if it's too soon).
+  // The sky and haze are columns 1 pixel wide that the page stretches, so
+  // fading them only changes those columns; the stars and moon are on their
+  // own canvases, only changed when they are.
   function paint() {
-    const { sky, haze, stars, moon, cloudRenderer } = state;
+    const { sky, haze, cloudRenderer } = state;
     const now = performance.now();
+    if (now - state.paintedAt < PAINT_INTERVAL - PAINT_SLACK) {
+      state.animationFrame = requestFrame(paint);
+      return;
+    }
+    state.paintedAt = now;
     let fading = false;
 
     for (const layer of [sky, haze]) {
@@ -150,23 +210,6 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
       if (progress < 1) fading = true;
     }
     if (cloudRenderer?.paint(now)) fading = true;
-    const backgroundChanged = sky.changed || stars.changed || moon.changed;
-    sky.changed = false;
-    stars.changed = false;
-    moon.changed = false;
-
-    // The sky stretched across the screen, with the stars' light added over
-    // it, and the moon over them (its colors already include the sky's light)
-    if (backgroundChanged) {
-      const canvas = canvases.background;
-      const context = canvas.getContext('2d');
-      context.globalCompositeOperation = 'copy';
-      context.drawImage(sky.canvas, 0, 0, canvas.width, canvas.height);
-      context.globalCompositeOperation = 'screen';
-      context.drawImage(stars.canvas, 0, 0, canvas.width, canvas.height);
-      context.globalCompositeOperation = 'source-over';
-      if (moon.key !== null) context.drawImage(moon.canvas, moon.left, moon.top);
-    }
 
     state.animationFrame = fading ? requestFrame(paint) : 0;
   }
@@ -307,6 +350,19 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
     const resized = stars.canvas.width !== fullWidth || stars.canvas.height !== fullHeight;
     const key = starsKey(settings);
     if (!resized && key !== null && key === stars.key) return false;
+    // In twilight, only every STAR_TWILIGHT_INTERVAL, unless the star
+    // settings changed
+    const now = performance.now();
+    if (
+      !resized &&
+      key === null &&
+      stars.key === null &&
+      JSON.stringify(settings.stars) === stars.sizing &&
+      now - stars.workedOutAt < STAR_TWILIGHT_INTERVAL
+    ) {
+      return false;
+    }
+    stars.workedOutAt = now;
     stars.key = key;
     resize(stars.canvas, fullWidth, fullHeight);
     const context = stars.canvas.getContext('2d');
@@ -362,7 +418,7 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
     const size = diameter + 2 * moonGlowMargin(radius, settings);
     const altitude = settings.moon.altitude ?? DEFAULT_MOON_ALTITUDE;
     const centerX = fullWidth * (1 - MOON_FROM_RIGHT) - radius;
-    const centerY = fullHeight - (altitude / 90) * (fullHeight - radius);
+    const centerY = fullHeight - (Math.min(altitude, MOON_TOP_ALTITUDE) / MOON_TOP_ALTITUDE) * (fullHeight - radius);
     const left = Math.round(centerX - size / 2);
     const top = Math.round(centerY - size / 2);
     // Below the screen (with the moon below the horizon), there's nothing to draw
@@ -396,6 +452,8 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
       settings.moon.rotation,
       settings.moon.brightLimb,
       settings.exposure,
+      // (the haze changes how it's drawn, see hazyMoon)
+      Math.round(settings.clouds.total),
     ]);
     if (key === moon.key && sameValues(sky, moon.sky, INSTANT_CHANGE)) {
       // Nothing to draw again, though it may have moved a little
@@ -439,11 +497,7 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
     const started = performance.now();
     const { fadeDuration } = state.props;
     const settings = { ...state.props.settings, time: cloudTime() };
-    const { fullWidth, fullHeight, cloudHeight } = sizes();
-    if (canvases.background.width !== fullWidth || canvases.background.height !== fullHeight) {
-      resize(canvases.background, fullWidth, fullHeight);
-      state.sky.changed = true;
-    }
+    const { cloudHeight } = sizes();
 
     // Every layer's colors by height, worked out once at the clouds' resolution
     const rows = computeRows(settings, cloudHeight);
@@ -465,6 +519,7 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
     updateAnimation();
     updatePrecipitation();
     startPainting();
+    reportLayers();
     const done = performance.now();
 
     report({

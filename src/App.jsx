@@ -8,15 +8,23 @@ import {
   DEFAULT_HAZE_CONTRAST,
   DEFAULT_MOON,
   DEFAULT_STARS,
+  skyBrightnessAt,
+  skyColorAt,
   topSkyBrightness,
 } from './skyImage.js';
 import { toImperial } from './units.js';
 import { forecastFor } from './forecastWindow.js';
+import { FLAVORS, DEFAULT_FLAVOR, applyFlavor } from './flavor.js';
 import {
   BACK_ICON,
   CUSTOM_TASK_ICONS,
   DAY_BACK_ICON,
   DAY_ON_ICON,
+  ADD_ICON,
+  BRIGHTNESS_HIGH_ICON,
+  BRIGHTNESS_LOW_ICON,
+  DELETE_ICON,
+  POWER_ICON,
   REFRESH_ICON,
   ICONS,
   MOON_PHASE_ICONS,
@@ -266,14 +274,43 @@ const DARK_SKY_BRIGHTNESS = 0.3;
 
 // Marks the page with .dark-sky while the top of the sky is dark (see
 // DARK_SKY_BRIGHTNESS), changing the page only when that flips
+// The sky's light behind the panels (--sky-light on the page, 0 at night to
+// 1 by day), which the Glass flavor's colors follow: the on-screen
+// brightness of the sky at the middle of the screen, as a share of
+// SKY_LIGHT_FULL (and full beyond it), in steps of SKY_LIGHT_STEP, so the
+// panels are only repainted (each change repaints them) when it's moved
+// enough to see: rarely by day and at night, every minute or so at dusk
+const SKY_LIGHT_FULL = 0.75;
+// Where the lighting panel sits (up the screen, 0 at the bottom), for its
+// fill's sky color, and how much that color must change before it's updated
+const LIGHTING_PANEL_HEIGHT = 0.88;
+const SKY_COLOR_STEP = 4;
+const SKY_LIGHT_STEP = 0.02;
+
 const DarkSkyMarker = memo(function DarkSkyMarker({ exposure }) {
   const sky = useStore(skyStore);
-  const dark = sky
-    ? topSkyBrightness({ colors: sky.colors, exposure, sunElevation: sky.sun.elevation }) < DARK_SKY_BRIGHTNESS
-    : false;
+  const scene = sky && { colors: sky.colors, exposure, sunElevation: sky.sun.elevation };
+  const dark = scene ? topSkyBrightness(scene) < DARK_SKY_BRIGHTNESS : false;
+  const light = scene
+    ? Math.round(Math.min(1, skyBrightnessAt(scene, 0.5) / SKY_LIGHT_FULL) / SKY_LIGHT_STEP) * SKY_LIGHT_STEP
+    : 1;
   useEffect(() => {
     document.documentElement.classList.toggle('dark-sky', dark);
   }, [dark]);
+  useEffect(() => {
+    document.documentElement.style.setProperty('--sky-light', light.toFixed(2));
+  }, [light]);
+  // The sky's color where the lighting panel sits, near the top of the
+  // screen (--sky-top-color), which it's filled with so it looks as if over
+  // open sky (see .lighting-panel); only changed when it does by more than
+  // SKY_COLOR_STEP, to keep repaints rare
+  const topColor = scene
+    ? skyColorAt(scene, LIGHTING_PANEL_HEIGHT).map((value) => Math.round(value / SKY_COLOR_STEP) * SKY_COLOR_STEP)
+    : null;
+  const topColorText = topColor ? `rgb(${topColor.join(', ')})` : null;
+  useEffect(() => {
+    if (topColorText) document.documentElement.style.setProperty('--sky-top-color', topColorText);
+  }, [topColorText]);
   return null;
 });
 
@@ -304,10 +341,35 @@ function clearNightIcon(moon) {
   return MOON_PHASE_ICONS[Math.round(moon.phase * 8) % 8];
 }
 
-// The weather icon on a clear night, following the moon in the live sky
-function ClearNightIcon() {
+// A clear sky's icon in twilight: the sunset from sunset until civil dusk,
+// and the sunrise from civil dawn until sunrise, by the sun times' events at
+// `now` (ms); null outside those times
+function clearTwilightIcon(sunTimes, now) {
+  const { last, next } = sunEventsAround(sunTimes, new Date(now));
+  if (last && last.type === 'sunset' && last.civil && now < Date.parse(last.civil)) return 'sunset';
+  if (next && next.type === 'sunrise' && next.civil && now >= Date.parse(next.civil)) return 'sunrise';
+  return null;
+}
+
+// The current weather's icon (for `code`, its entry in weatherCodes.json),
+// at the sky's time: the real time, or the time set in Settings to test the
+// sky, checked as the sky updates. It's the night icon between sunset and
+// sunrise by the sun times (before they load, by the weather's own day or
+// night flag), and on a clear night, the full-color sunset or sunrise in the
+// twilight just after sunset or before sunrise, else the moon (following the
+// moon in the sky) or stars.
+function CurrentWeatherIcon({ code, weather, sunTimes }) {
   const sky = useStore(skyStore);
-  return <WeatherIcon icon={clearNightIcon(sky && sky.moon)} />;
+  const now = sky ? Date.parse(sky.time) : Date.now();
+  const { last, next } = sunEventsAround(sunTimes, new Date(now));
+  let night;
+  if (last) night = last.type === 'sunset';
+  else if (next) night = next.type === 'sunrise';
+  else night = weather?.current?.is_day === 0;
+  if (night && weather?.current?.weather_code === CLEAR_CODE) {
+    return <WeatherIcon icon={clearTwilightIcon(sunTimes, now) || clearNightIcon(sky && sky.moon)} />;
+  }
+  return <WeatherIcon icon={(night && code?.nightIcon) || code?.icon || UNKNOWN_ICON} />;
 }
 
 // Where the sun is, and the atmosphere the sky colors were calculated with
@@ -701,6 +763,385 @@ const weatherIconUrl = (name) => iconUrl(name, 'fill');
 const whiteIconUrl = (name) => iconUrl(name, 'white');
 const fluentWhiteIconUrl = (name) => iconUrl(name, 'white', 'fluent');
 
+// A power button: Fluent's power icon, white while `powered`, and while
+// off, clear with a glow around it in the panel's glass (see index.css)
+function PowerToggle({ powered, onToggle, disabled, className = '' }) {
+  const iconMask = {
+    WebkitMaskImage: `url(${fluentWhiteIconUrl(POWER_ICON)})`,
+    maskImage: `url(${fluentWhiteIconUrl(POWER_ICON)})`,
+  };
+  return (
+    <button
+      type="button"
+      className={`lighting-power${powered ? ' on' : ''} ${className}`}
+      onClick={onToggle}
+      disabled={disabled}
+      title={powered ? 'Turn off' : 'Turn on'}
+    >
+      <span className={`lighting-power-icon ${iconClass(POWER_ICON)}`} role="img" aria-label="Power" style={iconMask} />
+    </button>
+  );
+}
+
+// A brightness slider, as LightLine's: a bar filled to the brightness
+// (`value`, 0–100) with a dim sun at its left, a bright one at its right and
+// the value in its middle; dragging anywhere along it sets it (an unseen
+// slider over the whole bar). `small` for the automation rows.
+function BrightnessSlider({ value, onChange, small = false, disabled = false }) {
+  return (
+    <div className={`brightness-slider${small ? ' small' : ''}${disabled ? ' disabled' : ''}`}>
+      <span className="brightness-fill" style={{ width: `${value}%` }} />
+      <img className="brightness-icon" src={fluentWhiteIconUrl(BRIGHTNESS_LOW_ICON)} alt="" />
+      <span className="brightness-value">{value}</span>
+      <img className="brightness-icon" src={fluentWhiteIconUrl(BRIGHTNESS_HIGH_ICON)} alt="" />
+      <input
+        type="range"
+        min="0"
+        max="100"
+        step="1"
+        value={value}
+        disabled={disabled}
+        aria-label="Brightness"
+        onChange={(event) => onChange(Number(event.target.value))}
+      />
+    </div>
+  );
+}
+
+/*
+ * Steppers, for setting numbers and times by touch (the Pi 3's browser has
+ * no on-screen keyboard or time picker): the value between − and + arrows.
+ * A tap steps once; holding repeats, after HOLD_DELAY, every HOLD_INTERVAL,
+ * stepping further the longer it's held (HOLD_SPEEDUPS: after this many
+ * repeats, this many steps at a time).
+ */
+const HOLD_DELAY = 400;
+const HOLD_INTERVAL = 90;
+const HOLD_SPEEDUPS = [
+  [0, 1],
+  [12, 2],
+  [24, 5],
+];
+
+// A stepper's arrow button, calling onStep(steps) on tap and while held
+function StepButton({ direction, onStep, label }) {
+  const hold = useRef({ timer: 0, repeats: 0 });
+  const stop = () => {
+    clearTimeout(hold.current.timer);
+    hold.current.timer = 0;
+  };
+  useEffect(() => stop, []);
+  const start = (event) => {
+    event.preventDefault();
+    stop();
+    hold.current.repeats = 0;
+    onStep.current(direction);
+    const repeat = () => {
+      hold.current.repeats++;
+      const speed = HOLD_SPEEDUPS.filter(([after]) => hold.current.repeats >= after).pop()[1];
+      onStep.current(direction * speed);
+      hold.current.timer = setTimeout(repeat, HOLD_INTERVAL);
+    };
+    hold.current.timer = setTimeout(repeat, HOLD_DELAY);
+  };
+  return (
+    <button
+      type="button"
+      className="stepper-arrow"
+      aria-label={label}
+      onPointerDown={start}
+      onPointerUp={stop}
+      onPointerLeave={stop}
+      onPointerCancel={stop}
+      onContextMenu={(event) => event.preventDefault()}
+    >
+      {direction < 0 ? '‹' : '›'}
+    </button>
+  );
+}
+
+// A stepper showing `display`, calling onStep(steps) (negative for −)
+function Stepper({ display, onStep, className = '' }) {
+  // (the latest onStep, for a hold that started under an older one)
+  const onStepRef = useRef(onStep);
+  onStepRef.current = onStep;
+  return (
+    <span className={`stepper ${className}`}>
+      <StepButton direction={-1} onStep={onStepRef} label="Less" />
+      <span className="stepper-value">{display}</span>
+      <StepButton direction={1} onStep={onStepRef} label="More" />
+    </span>
+  );
+}
+
+// A time (HH:MM) stepper, in steps of `step` minutes, round the clock
+function TimeStepper({ value, onChange, step = 15 }) {
+  const [hours, minutes] = value.split(':').map(Number);
+  const total = hours * 60 + minutes;
+  const onStep = (steps) => {
+    // (a time off the steps moves to the nearest one that way first)
+    const base = steps > 0 ? Math.floor(total / step) * step : Math.ceil(total / step) * step;
+    const next = (((base + steps * step) % 1440) + 1440) % 1440;
+    onChange(`${String(Math.floor(next / 60)).padStart(2, '0')}:${String(next % 60).padStart(2, '0')}`);
+  };
+  const date = new Date(2000, 0, 1, hours, minutes);
+  return <Stepper className="time-stepper" display={displayTimeFormat.format(date).toLowerCase()} onStep={onStep} />;
+}
+
+// A whole-number stepper, with its unit after it
+function NumberStepper({ value, onChange, unit, min = -Infinity, max = Infinity }) {
+  const onStep = (steps) => onChange(Math.min(max, Math.max(min, value + steps)));
+  return (
+    <Stepper
+      className="number-stepper"
+      display={
+        <>
+          <span className="number-stepper-number">{value}</span>
+          {unit && <span className="number-stepper-unit">{unit}</span>}
+        </>
+      }
+      onStep={onStep}
+    />
+  );
+}
+
+// How soon after the automations change they're saved (ms)
+const AUTOMATION_SAVE_DELAY = 500;
+
+// The most often brightness changes are sent to LightLine (ms): 5 a second
+const BRIGHTNESS_SEND_INTERVAL = 200;
+
+// The times an automation can be set for: a clock time, or minutes from a
+// sun event
+const AUTOMATION_TIMES = [
+  { value: 'time', label: 'Time' },
+  { value: 'sunset', label: 'Sunset' },
+  { value: 'sunrise', label: 'Sunrise' },
+  { value: 'astroDusk', label: 'Astro Dusk' },
+  { value: 'astroDawn', label: 'Astro Dawn' },
+];
+const AUTOMATION_CONDITIONS = [
+  { value: 'always', label: 'Always' },
+  { value: 'whenOff', label: 'When off' },
+  { value: 'whenOn', label: 'When on' },
+];
+
+// A new automation's settings
+const newAutomation = () => ({
+  id: `${Date.now()}-${Math.random()}`,
+  condition: 'always',
+  timeKind: 'time',
+  time: '20:00',
+  offset: 0,
+  brightness: 100,
+  powered: true,
+  fade: false,
+});
+
+/**
+ * One automation, a row: when it applies (its condition), when it happens
+ * (a time, or minutes from a sun event), the brightness and power it sets,
+ * whether it fades to the next (only with another to fade to), and a
+ * button to delete it. Run by the server (see server/LightAutomation.js).
+ */
+function AutomationRow({ automation, canFade, onChange, onDelete }) {
+  // Fading needs another automation to fade to: with just one, it's off
+  const fade = canFade && automation.fade;
+  const set = (changes) => onChange({ ...automation, ...changes });
+  return (
+    <div className="automation-row">
+      <div className="automation-start">
+        <select value={automation.condition} onChange={(event) => set({ condition: event.target.value })}>
+          {AUTOMATION_CONDITIONS.map(({ value, label }) => (
+            <option key={value} value={value}>
+              {label}
+            </option>
+          ))}
+        </select>
+        <select value={automation.timeKind} onChange={(event) => set({ timeKind: event.target.value })}>
+          {AUTOMATION_TIMES.map(({ value, label }) => (
+            <option key={value} value={value}>
+              {label}
+            </option>
+          ))}
+        </select>
+        {automation.timeKind === 'time' ? (
+          <TimeStepper value={automation.time} onChange={(time) => set({ time })} />
+        ) : (
+          <NumberStepper
+            value={automation.offset}
+            onChange={(offset) => set({ offset })}
+            unit="min"
+            min={-720}
+            max={720}
+          />
+        )}
+      </div>
+      <BrightnessSlider small value={automation.brightness} onChange={(brightness) => set({ brightness })} />
+      <div className="automation-end">
+        <PowerToggle powered={automation.powered} onToggle={() => set({ powered: !automation.powered })} />
+        {/* Fade to next: a down arrow, filled while on and crossed out while off */}
+        <button
+          type="button"
+          className={`automation-fade${fade ? ' active' : ''}`}
+          aria-pressed={fade}
+          aria-label="Fade to next"
+          disabled={!canFade}
+          title={!canFade ? 'Add another automation to fade to' : fade ? 'Fades to the next' : "Doesn't fade to the next"}
+          onClick={() => set({ fade: !fade })}
+        >
+          <span className="automation-fade-arrow">↓</span>
+        </button>
+        <button type="button" className="automation-delete" onClick={onDelete} title="Delete">
+          <img src={fluentWhiteIconUrl(DELETE_ICON)} alt="Delete" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The lighting panel, opened from its corner button: the house's lights
+ * through LightLine (see server/LightsManager.js). For now, their master
+ * power: a button at its top right, white while on and just the icon's
+ * shadow outline while off. Their state is loaded each time it opens.
+ */
+function LightingPanel({ onClose }) {
+  // A tap anywhere outside the panel (or its button, which closes it
+  // itself) closes it
+  const panelRef = useRef(null);
+  useEffect(() => {
+    const outside = (event) => {
+      const panel = panelRef.current;
+      if (!panel || panel.contains(event.target)) return;
+      if (event.target.closest && event.target.closest('.lighting-toggle')) return;
+      onClose();
+    };
+    document.addEventListener('pointerdown', outside, true);
+    return () => document.removeEventListener('pointerdown', outside, true);
+  }, [onClose]);
+  // Whether the lights are on, or null until known
+  const [powered, setPowered] = useState(null);
+  // The lights' brightness (0–100, LightLine's 0–1), or null until known
+  const [brightness, setBrightness] = useState(null);
+  // The automations, run by the server (see server/LightAutomation.js):
+  // loaded each time the panel opens, and saved as they change (shortly
+  // after, so holding a stepper saves once)
+  const [automations, setAutomations] = useState(null);
+  const saveTimer = useRef(0);
+  function changeAutomations(next) {
+    setAutomations(next);
+    clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      fetchJson('/api/lights/automations', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ automations: next }),
+      }).catch((err) => setError(err.message));
+    }, AUTOMATION_SAVE_DELAY);
+  }
+  // (a change still waiting is saved if the panel closes first)
+  const pendingSave = useRef(null);
+  pendingSave.current = automations;
+  useEffect(
+    () => () => {
+      if (!saveTimer.current) return;
+      clearTimeout(saveTimer.current);
+      fetch('/api/lights/automations', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ automations: pendingSave.current }),
+      });
+    },
+    [],
+  );
+  // Brightness changes are sent to LightLine at most every
+  // BRIGHTNESS_SEND_INTERVAL: the first straight away, then the latest each
+  // interval while the slider moves, so the last always goes out
+  const brightnessSend = useRef({ lastSent: 0, pending: null, timer: 0 });
+  useEffect(() => () => clearTimeout(brightnessSend.current.timer), []);
+  function sendBrightness(value) {
+    const send = brightnessSend.current;
+    send.pending = value;
+    if (send.timer) return;
+    const flush = () => {
+      send.timer = 0;
+      if (send.pending === null) return;
+      const sending = send.pending;
+      send.pending = null;
+      send.lastSent = Date.now();
+      fetchJson(`/api/lights/brightness?brightness=${sending / 100}`, { method: 'POST' }).catch((err) =>
+        setError(err.message),
+      );
+    };
+    const wait = BRIGHTNESS_SEND_INTERVAL - (Date.now() - send.lastSent);
+    if (wait <= 0) flush();
+    else send.timer = setTimeout(flush, wait);
+  }
+  function changeBrightness(value) {
+    setBrightness(value);
+    setError(null);
+    sendBrightness(value);
+  }
+  const [error, setError] = useState(null);
+  useEffect(() => {
+    fetchJson('/api/lights/power')
+      .then((state) => setPowered(state.powered))
+      .catch((err) => setError(err.message));
+    fetchJson('/api/lights/brightness')
+      .then((state) => setBrightness(Math.round(state.brightness * 100)))
+      .catch((err) => setError(err.message));
+    fetchJson('/api/lights/automations')
+      .then((state) => setAutomations(state.automations))
+      .catch((err) => setError(err.message));
+  }, []);
+  async function toggle() {
+    if (powered === null) return;
+    const next = !powered;
+    setPowered(next);
+    setError(null);
+    try {
+      setPowered((await fetchJson(`/api/lights/power?powered=${next}`, { method: 'POST' })).powered);
+    } catch (err) {
+      setPowered(!next);
+      setError(err.message);
+    }
+  }
+  return (
+    <div ref={panelRef} className="lighting-panel">
+      <div className="lighting-header">
+        <div className="lighting-title">Lighting Control</div>
+        <PowerToggle powered={powered} onToggle={toggle} disabled={powered === null} />
+      </div>
+      {error && <div className="lighting-error">LightLine unavailable</div>}
+      <BrightnessSlider value={brightness === null ? 0 : brightness} onChange={changeBrightness} disabled={brightness === null} />
+      <div className="automation">
+        <div className="automation-title">Automation</div>
+        {(automations || []).map((automation) => (
+          <AutomationRow
+            key={automation.id}
+            automation={automation}
+            canFade={automations.length > 1}
+            onChange={(changed) => changeAutomations(automations.map((a) => (a.id === changed.id ? changed : a)))}
+            onDelete={() => changeAutomations(automations.filter((a) => a.id !== automation.id))}
+          />
+        ))}
+        <div className="automation-add-row">
+          <button
+            type="button"
+            className="automation-add"
+            disabled={automations === null}
+            onClick={() => changeAutomations([...automations, newAutomation()])}
+            title="Add an automation"
+          >
+            <img src={fluentWhiteIconUrl(ADD_ICON)} alt="Add" />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // A corner button's Fluent icon, white
 function CornerIcon({ name, label }) {
   return <img className={`corner-icon ${iconClass(name)}`} src={fluentWhiteIconUrl(name)} alt={label} />;
@@ -937,7 +1378,11 @@ function ForecastUntil({ forecast, now, until }) {
   const span = until ? forecastFor(forecast, now.getTime(), Date.parse(until.time)) : null;
   if (!span) return null;
   const fahrenheit = (celsius) => (celsius === null ? MISSING : Math.round(toImperial(celsius, '°C').value));
-  const inches = toImperial(span.precipitation, 'mm').value.toFixed(1);
+  // The amount to a tenth of an inch, or "<0.1" whenever there's any chance
+  // of precipitation but the amount rounds to none (the amount and the chance
+  // come from different forecasts, see forecastWindow.js); none with no chance
+  const rounded = toImperial(span.precipitation, 'mm').value.toFixed(1);
+  const inches = rounded !== '0.0' ? rounded : span.precipitationChance > 0 ? '<0.1' : null;
   const chance = span.precipitationChance === null ? MISSING : `${Math.round(span.precipitationChance * 100)}%`;
   return (
     <div className="sun-event-forecast">
@@ -963,7 +1408,7 @@ function ForecastUntil({ forecast, now, until }) {
           <span title="Chance of precipitation">{chance}</span>
         </div>
         {/* Hidden when none is forecast */}
-        {inches !== '0.0' && <div title="Precipitation">{inches} in</div>}
+        {inches !== null && <div title="Precipitation">{inches} in</div>}
       </div>
     </div>
   );
@@ -972,23 +1417,6 @@ function ForecastUntil({ forecast, now, until }) {
 // How often the daily tasks are reloaded (ms), to show ones done on another
 // screen
 const TASKS_RELOAD_INTERVAL = 60 * 1000;
-
-// The last sunrise (an ISO 8601 time, or null until the sun times load),
-// checked again at the next one, when the daily tasks reset
-function useLastSunrise(sunTimes) {
-  const [now, setNow] = useState(() => Date.now());
-  const events = (sunTimes && sunTimes.events) || [];
-  const sunrises = events.filter((event) => event.type === 'sunrise');
-  const last = sunrises.filter((event) => Date.parse(event.time) <= now).pop();
-  const next = sunrises.find((event) => Date.parse(event.time) > now);
-  useEffect(() => {
-    if (!next) return undefined;
-    const timer = setTimeout(() => setNow(Date.now()), Math.max(0, Date.parse(next.time) - Date.now()) + 1000);
-    return () => clearTimeout(timer);
-  }, [next && next.time]);
-  useEffect(() => setNow(Date.now()), [sunTimes]);
-  return last ? last.time : null;
-}
 
 // A task's custom icon: `icon` while not done and `doneIcon` once done,
 // both in full color, with the icons' usual shadow
@@ -1001,6 +1429,38 @@ function CustomTaskIcon({ icon, doneIcon, done, placeClassName = '', burstTarget
   );
 }
 
+// The days (0 is Sunday) the office task shows: Tuesday, Wednesday, Thursday
+const OFFICE_DAYS = [2, 3, 4];
+
+// The sleep estimate under the sleep task late at night: hours from going to
+// bed (SLEEP_BED_DELAY_MINUTES from now) to waking (the wake-up time set in
+// Settings, OFFICE_EARLIER_MINUTES earlier on office days). At least
+// SLEEP_GOAL_HOURS is green, under it orange, and more than SLEEP_LOW_HOURS
+// under it red and bold (by the number shown, to a tenth of an hour).
+const SLEEP_BED_DELAY_MINUTES = 90;
+const OFFICE_EARLIER_MINUTES = 60;
+const SLEEP_GOAL_HOURS = 7;
+const SLEEP_LOW_HOURS = 1;
+
+// "Now: <hours>", the sleep you'd get going to bed soon, waking at
+// `wakeTime` (HH:MM, the next time it comes round) or an hour earlier if
+// `office`; re-checked every minute
+function SleepEstimate({ wakeTime, office }) {
+  const now = useNow(CALENDAR_NOW_INTERVAL);
+  const [hour, minute] = wakeTime.split(':').map(Number);
+  const wake = new Date(now);
+  wake.setHours(hour, minute, 0, 0);
+  if (wake.getTime() <= now) wake.setDate(wake.getDate() + 1);
+  const wakeAt = wake.getTime() - (office ? OFFICE_EARLIER_MINUTES * 60 * 1000 : 0);
+  const hours = Math.round(((wakeAt - (now + SLEEP_BED_DELAY_MINUTES * 60 * 1000)) / HOUR_MS) * 10) / 10;
+  const level = hours >= SLEEP_GOAL_HOURS ? 'ok' : hours >= SLEEP_GOAL_HOURS - SLEEP_LOW_HOURS ? 'short' : 'low';
+  return (
+    <span className={`sleep-estimate ${level}`} title="Sleep if you go to bed in an hour and a half">
+      Now: {hours.toFixed(1)}
+    </span>
+  );
+}
+
 // How long a task's celebration lasts (ms), matching index.css
 const TASK_BURST_MS = 800;
 
@@ -1008,7 +1468,7 @@ const TASK_BURST_MS = 800;
 // a celebration, its contents popping and a burst of sparks around them.
 // The burst is centered on the button, or on the child marked with
 // data-burst-target equal to `burstTarget` (the icon the tap fills in).
-function TaskButton({ done, onPress, title, burstTarget, children }) {
+function TaskButton({ done, onPress, title, burstTarget, below, children }) {
   // Each tap's number, which restarts the animations; 0 before any
   const [burst, setBurst] = useState(0);
   const [bursting, setBursting] = useState(false);
@@ -1052,6 +1512,8 @@ function TaskButton({ done, onPress, title, burstTarget, children }) {
           style={burstCenter ? { left: `${burstCenter.left}px`, top: `${burstCenter.top}px` } : undefined}
         />
       )}
+      {/* Anything shown under the button, out of the layout */}
+      {below && <span className="task-below">{below}</span>}
     </button>
   );
 }
@@ -1059,25 +1521,41 @@ function TaskButton({ done, onPress, title, burstTarget, children }) {
 /**
  * Today's tasks, each a button that marks it done (it can't be undone until
  * they all reset at sunrise, or from Settings): 7 hours' sleep, leaving home,
+ * going to the office (Tuesdays, Wednesdays and Thursdays),
  * 2 L of water (a cup filled for each liter), work (on weekdays) and
  * stretching. `tasks` is
  * when each was done (see server/TasksManager.js); `onDo(task)` marks one done.
  */
-function TodayTasks({ tasks, sunTimes, onDo, dayOffset, onShiftDay }) {
-  const lastSunrise = useLastSunrise(sunTimes);
-  if (!tasks || !lastSunrise) return null;
-  const since = Date.parse(lastSunrise);
-  const doneCount = (task) => (tasks[task] || []).filter((time) => Date.parse(time) > since).length;
+function TodayTasks({ tasks, onDo, dayOffset, onShiftDay, anyDay, wakeTime }) {
+  if (!tasks || !tasks.days) return null;
+  // The day shown (the calendar's, see dayFromToday), its tasks' progress,
+  // and whether they can still be changed (today's and yesterday's, or any
+  // day's with `anyDay`, the setting in Settings)
+  const date = dayFromToday(dayOffset);
+  const completed = (tasks.days[date] && tasks.days[date].completedTasks) || {};
+  const doneCount = (task) => completed[task] || 0;
+  const changeable = anyDay || dayOffset === 0 || dayOffset === -1;
+  // The arrows only go as far as the days kept (see server/TasksManager.js)
+  const canGoBack = dayFromToday(dayOffset - 1) >= tasks.range.start;
+  const canGoOn = dayFromToday(dayOffset + 1) <= tasks.range.end;
   const sleep = doneCount('sleep') > 0;
   const leave = doneCount('leave') > 0;
   const water = doneCount('water');
   const work = doneCount('work') > 0;
-  // Work only shows on weekdays: the day the last sunrise was on, as the
-  // tasks run from sunrise to sunrise
-  const sunriseDay = new Date(lastSunrise).getDay();
+  const office = doneCount('office') > 0;
+  // Work only shows on weekdays (of the day shown, which runs from sunrise to
+  // sunrise)
+  const [year, month, day] = date.split('-').map(Number);
+  const sunriseDay = new Date(year, month - 1, day, 12).getDay();
   const workday = sunriseDay >= 1 && sunriseDay <= 5;
+  // ...and going to the office only on Tuesdays, Wednesdays and Thursdays
+  const officeDay = OFFICE_DAYS.includes(sunriseDay);
+  // Whether the next day is an office day (for the sleep estimate)
+  const tomorrowIsOfficeDay = OFFICE_DAYS.includes((sunriseDay + 1) % 7);
   const stretch = doneCount('stretch') > 0;
-  const press = (task) => () => onDo(task, lastSunrise);
+  const press = (task) => () => {
+    if (changeable) onDo(task, date);
+  };
   return (
     <section className="today">
       {/* The title over the tasks, starting at the first task's left edge */}
@@ -1085,22 +1563,37 @@ function TodayTasks({ tasks, sunTimes, onDo, dayOffset, onShiftDay }) {
       {/* The title names the calendar's day (below the tasks), with arrows
           to move it a day back or on; the tasks are always today's */}
       <div className="today-title">
-        <button type="button" className="day-arrow" onClick={() => onShiftDay(-1)} title="Previous day">
-          <img className={iconClass(DAY_BACK_ICON)} src={fluentWhiteIconUrl(DAY_BACK_ICON)} alt="Previous day" />
-        </button>
+        {canGoBack && (
+          <button type="button" className="day-arrow back" onClick={() => onShiftDay(-1)} title="Previous day">
+            <img className={iconClass(DAY_BACK_ICON)} src={fluentWhiteIconUrl(DAY_BACK_ICON)} alt="Previous day" />
+          </button>
+        )}
         <span className="today-title-text">{dayName(dayOffset)}</span>
-        <button type="button" className="day-arrow" onClick={() => onShiftDay(1)} title="Next day">
-          <img className={iconClass(DAY_ON_ICON)} src={fluentWhiteIconUrl(DAY_ON_ICON)} alt="Next day" />
-        </button>
+        {canGoOn && (
+          <button type="button" className="day-arrow on" onClick={() => onShiftDay(1)} title="Next day">
+            <img className={iconClass(DAY_ON_ICON)} src={fluentWhiteIconUrl(DAY_ON_ICON)} alt="Next day" />
+          </button>
+        )}
       </div>
-      <div className="today-tasks">
-        <TaskButton done={sleep} onPress={press('sleep')} title="7 hours of sleep">
+      {/* Greyed out, and not tappable, on days other than today and yesterday */}
+      <div className={`today-tasks${changeable ? '' : ' locked'}`}>
+        <TaskButton
+          done={sleep}
+          onPress={press('sleep')}
+          title="7 hours of sleep"
+          below={wakeTime && <SleepEstimate wakeTime={wakeTime} office={tomorrowIsOfficeDay} />}
+        >
           <CustomTaskIcon icon={CUSTOM_TASK_ICONS.sleep} doneIcon={CUSTOM_TASK_ICONS.sleepDone} done={sleep} />
           <span className={`task-badge${sleep ? ' done' : ''}`}>7</span>
         </TaskButton>
         <TaskButton done={leave} onPress={press('leave')} title="Leave the apartment">
           <CustomTaskIcon icon={CUSTOM_TASK_ICONS.leave} doneIcon={CUSTOM_TASK_ICONS.leaveDone} done={leave} />
         </TaskButton>
+        {officeDay && (
+          <TaskButton done={office} onPress={press('office')} title="Go to the office">
+            <CustomTaskIcon icon={CUSTOM_TASK_ICONS.office} doneIcon={CUSTOM_TASK_ICONS.officeDone} done={office} />
+          </TaskButton>
+        )}
         <TaskButton done={water >= 2} onPress={press('water')} title="2 liters of water" burstTarget={water}>
           <CustomTaskIcon
             icon={CUSTOM_TASK_ICONS.water}
@@ -1133,6 +1626,22 @@ function TodayTasks({ tasks, sunTimes, onDo, dayOffset, onShiftDay }) {
 // How often today's calendar events are reloaded (ms); the server fetches
 // the calendars' feeds at most every 5 minutes
 const CALENDAR_RELOAD_INTERVAL = 5 * 60 * 1000;
+// From this hour of the night (22 is 10 pm) until sunrise (when the
+// calendar's "today" moves on), Today's calendar shows tomorrow's events
+// instead, once today's have all ended (see nothingLeftTonight)
+const PEEK_TOMORROW_HOUR = 22;
+
+// Whether, at `now` (ms), it's past PEEK_TOMORROW_HOUR on the calendar's
+// "today" (so through the night until sunrise) and today's calendar
+// (`calendar`, once loaded) has no timed events still to come or still going on
+function nothingLeftTonight(calendar, now) {
+  const from = calendarTodayNoon();
+  from.setHours(PEEK_TOMORROW_HOUR, 0, 0, 0);
+  if (now < from.getTime()) return false;
+  if (!calendar || !calendar.configured || calendar.date !== dayFromToday(0)) return false;
+  return !calendar.events.some((event) => !event.allDay && Date.parse(event.end) > now);
+}
+
 // How often the calendar's current-time line moves on (ms)
 const CALENDAR_NOW_INTERVAL = 60 * 1000;
 const calendarHourFormat = new Intl.DateTimeFormat('en-US', { hour: 'numeric' });
@@ -1147,25 +1656,56 @@ const CALENDAR_ROW_VW = 2.4;
 const CALENDAR_EVENT_PADDING_VW = 0.3;
 // The events' borders (px, above and below), matching index.css
 const CALENDAR_EVENT_BORDER_PX = 1;
-const CALENDAR_LONGEST_SPAN_HOURS = 24;
+// The longest the view spans (hours), for the day's events running into the
+// small hours; its text is sized so an hour-long event fits a row at this span
+const CALENDAR_LONGEST_SPAN_HOURS = 16;
 // The calendar's height (px) assumed until it's been measured
 const CALENDAR_FIRST_HEIGHT_VW = 70;
 const weekdayFormat = new Intl.DateTimeFormat('en-US', { weekday: 'long' });
 
 // The date `offset` days from today, as YYYY-MM-DD on this computer's clock
-function dayFromToday(offset) {
-  const date = new Date();
-  date.setHours(12, 0, 0, 0);
-  date.setDate(date.getDate() + offset);
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+// The calendar's "today", as YYYY-MM-DD: the day of the last sunrise (set by
+// the page from the sun times, see calendarToday), so its days run from
+// sunrise to sunrise, like the daily tasks. The page sets it as it renders.
+let calendarTodayDate = null;
+
+// A date as YYYY-MM-DD on this computer's clock
+const localDate = (date) =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+
+// The calendar's "today" at `now` (ms), from the sun times' events: the date
+// of the last sunrise, or, before the sun times load, the date now
+function calendarToday(sunTimes, now) {
+  const sunrises = ((sunTimes && sunTimes.events) || []).filter((event) => event.type === 'sunrise');
+  const last = sunrises.filter((event) => Date.parse(event.time) <= now).pop();
+  return localDate(new Date(last ? Date.parse(last.time) : now));
 }
 
-// A day's name, `offset` days from today: Today, Tomorrow, Yesterday, or its weekday
+// The calendar's "today" (or now's date, before it's set), as a Date at noon
+function calendarTodayNoon() {
+  if (!calendarTodayDate) {
+    const date = new Date();
+    date.setHours(12, 0, 0, 0);
+    return date;
+  }
+  const [year, month, day] = calendarTodayDate.split('-').map(Number);
+  return new Date(year, month - 1, day, 12);
+}
+
+// The date `offset` days from the calendar's "today", as YYYY-MM-DD
+function dayFromToday(offset) {
+  const date = calendarTodayNoon();
+  date.setDate(date.getDate() + offset);
+  return localDate(date);
+}
+
+// A day's name, `offset` days from the calendar's "today": Today, Tomorrow,
+// Yesterday, or its weekday
 function dayName(offset) {
   if (offset === 0) return 'Today';
   if (offset === 1) return 'Tomorrow';
   if (offset === -1) return 'Yesterday';
-  const date = new Date();
+  const date = calendarTodayNoon();
   date.setDate(date.getDate() + offset);
   return weekdayFormat.format(date);
 }
@@ -1225,6 +1765,127 @@ function hourStart(time) {
  * with room for only one row, the time goes beside the title if there's
  * space. With no events left, it's just a line saying so.
  */
+/*
+ * Emoji in text from calendars and tasks, shown as Fluent Emoji pictures
+ * (Microsoft's, in their Color style, served from the Pi 5: see
+ * scripts/importFluentEmoji.mjs) so they look the same on every screen.
+ * Which ones there are is loaded once; until then, or for any not there,
+ * the emoji's left as text (in the screen's own emoji font).
+ */
+const EMOJI = /(?:\p{Regional_Indicator}{2}|[#*0-9]\uFE0F?\u20E3|\p{Extended_Pictographic}(?:\uFE0F|\p{Emoji_Modifier})?(?:\u200D\p{Extended_Pictographic}(?:\uFE0F|\p{Emoji_Modifier})?)*)/gu;
+const emojiStore = createStore(null);
+let emojiLoading = false;
+function loadEmojiIndex() {
+  if (emojiLoading) return;
+  emojiLoading = true;
+  fetchJson('/emoji/index.json')
+    .then((names) => emojiStore.set(new Set(names)))
+    .catch((err) => console.warn('Emoji pictures unavailable:', err.message));
+}
+
+// An emoji's picture's name: its code points in hex, joined by "-", without
+// variation selector 16 (as the pictures are named)
+const emojiName = (emoji) =>
+  [...emoji]
+    .map((char) => char.codePointAt(0))
+    .filter((point) => point !== 0xfe0f)
+    .map((point) => point.toString(16))
+    .join('-');
+
+// `text` with its emoji as pictures
+function EmojiText({ text }) {
+  const available = useStore(emojiStore);
+  useEffect(loadEmojiIndex, []);
+  if (!text) return null;
+  const parts = [];
+  let last = 0;
+  for (const match of text.matchAll(EMOJI)) {
+    const name = emojiName(match[0]);
+    if (!available || !available.has(name)) continue;
+    if (match.index > last) parts.push(text.slice(last, match.index));
+    parts.push(<img key={match.index} className="emoji" src={`/emoji/${name}.svg`} alt={match[0]} draggable="false" />);
+    last = match.index + match[0].length;
+  }
+  if (parts.length === 0) return text;
+  if (last < text.length) parts.push(text.slice(last));
+  return parts;
+}
+
+// The green of done things: the done 7, and done Google Tasks
+const TASK_DONE_COLOR = '#22c55e';
+
+// One Google Task: a row with a circle and its title ("overdue" after it
+// for one due earlier). Tapping an open one completes it (saved to Google
+// Tasks): its circle fills with a green check, with the daily tasks'
+// celebration burst on it, and the row takes a soft green tint.
+function GoogleTaskRow({ task, onComplete }) {
+  const [burst, setBurst] = useState(0);
+  useEffect(() => {
+    if (!burst) return undefined;
+    const timer = setTimeout(() => setBurst(0), TASK_BURST_MS);
+    return () => clearTimeout(timer);
+  }, [burst]);
+  const press = () => {
+    if (task.done) return;
+    onComplete(task);
+    setBurst(Date.now());
+  };
+  return (
+    <button
+      type="button"
+      className={`calendar-task${task.done ? ' done' : ''}${task.overdue ? ' overdue' : ''}`}
+      title={task.notes || undefined}
+      onClick={press}
+      style={task.done ? { '--event-color': TASK_DONE_COLOR } : undefined}
+    >
+      {/* Done: drawn as a calendar event is, in green (see index.css) */}
+      {task.done && <span className="calendar-event-fill" style={{ backgroundColor: TASK_DONE_COLOR }} />}
+      {task.done && <span className="calendar-event-edge" />}
+      <span className="calendar-task-check-place">
+        <span key={burst} className={`calendar-task-check${burst ? ' task-pop' : ''}`}>
+          {task.done && <span className="calendar-task-checkmark">✓</span>}
+        </span>
+        {burst ? <span key={`burst-${burst}`} className="task-burst calendar-task-burst" /> : null}
+      </span>
+      <span className="calendar-task-title">
+        <EmojiText text={task.title} />
+      </span>
+      {task.overdue && <span className="calendar-task-note">overdue</span>}
+    </button>
+  );
+}
+
+// Google Tasks for the day shown (see server/GoogleTasksManager.js), under
+// the daily task buttons and above the calendar; nothing when there are none.
+// With `foldDone` (today's, late at night under "Coming up tomorrow"), the
+// completed ones show as one completed row counting them.
+function GoogleTasksList({ tasks, onComplete, foldDone = false }) {
+  if (tasks.length === 0) return null;
+  // (sorted here too, so one just tapped moves up straight away: completed
+  // first, in the order they were completed, then the open ones, as
+  // compareTasks in server/GoogleTasksManager.js)
+  const sorted = [...tasks].sort((a, b) => {
+    if (a.done !== b.done) return a.done ? -1 : 1;
+    if (a.done) return (Date.parse(a.completed) || 0) - (Date.parse(b.completed) || 0);
+    return Number(b.overdue) - Number(a.overdue) || a.title.localeCompare(b.title);
+  });
+  const done = sorted.filter((task) => task.done).length;
+  const shown =
+    foldDone && done > 0
+      ? [
+          { id: 'completed-tasks', title: `${done} Completed task${done === 1 ? '' : 's'}`, done: true },
+          ...sorted.filter((task) => !task.done),
+        ]
+      : sorted;
+  return (
+    <div className="google-tasks">
+      {shown.map((task) => (
+        <GoogleTaskRow key={task.id} task={task} onComplete={onComplete} />
+      ))}
+    </div>
+  );
+}
+
 // Whether the calendar shows events (not just a line saying there are none)
 // for the day `offset` days from today: all-day events, or timed ones (today,
 // ones not yet over)
@@ -1238,13 +1899,11 @@ function calendarHasEvents(calendar, offset) {
 const hourLabel = (hour) => calendarHourFormat.format(new Date(hour)).replace(' ', '\u00a0').toLowerCase();
 
 // The calendar's refresh button, spinning while `refreshing`, centered over
-// the first hour's label (`label`): it sits in a box as wide as that label
-// (from an unseen copy of it) where the labels go. `className` places the
-// box up and down (see index.css), with `style` for any measured position.
-function CalendarRefresh({ refreshing, onRefresh, label, className, style }) {
+// the hour labels (see index.css). `className` places it up and down, with
+// `style` for any measured position.
+function CalendarRefresh({ refreshing, onRefresh, className, style }) {
   return (
     <div className={`calendar-refresh-place ${className}`} style={style}>
-      <span className="calendar-refresh-label">{label}</span>
       <button
         type="button"
         className={`calendar-refresh${refreshing ? ' refreshing' : ''}`}
@@ -1257,13 +1916,18 @@ function CalendarRefresh({ refreshing, onRefresh, label, className, style }) {
   );
 }
 
-// Where the middle of the daily task buttons is, in px down from the top of
-// `element` (or null), measured after each render and as the window changes,
-// to line the refresh button up with them when there are no all-day events
+// The rows the calendar's refresh button lines up with: the first of these
+// shown, in the order they're laid out (the first Google Task, "Coming up
+// tomorrow", the first all-day event), or else the daily task buttons
+const REFRESH_BESIDE = ['.google-tasks .calendar-task', '.calendar-subtitle', '.calendar-all-day-event', '.today-tasks'];
+
+// Where the middle of the row the refresh button lines up with is (see
+// REFRESH_BESIDE), in px down from the top of `element` (or null), measured
+// after each render and as the window changes
 function useTasksMiddle(element) {
   const [middle, setMiddle] = useState(null);
   const measure = () => {
-    const tasks = document.querySelector('.today-tasks');
+    const tasks = REFRESH_BESIDE.map((selector) => document.querySelector(selector)).find(Boolean);
     if (!element || !tasks) return;
     const box = tasks.getBoundingClientRect();
     const value = Math.round(box.top + box.height / 2 - element.getBoundingClientRect().top);
@@ -1314,18 +1978,24 @@ function CalendarDay({ calendar, offset, refreshing, onRefresh }) {
     .filter((event) => !today || event.endMs > now);
 
   // The first hour labeled: the current one (today) or 8 am, or the hour
-  // the first event starting that day starts in, if earlier
+  // the first event starting that day (after its sunrise, as the day runs
+  // from sunrise to sunrise) starts in, if earlier
   const dayFrom = new Date(day);
   dayFrom.setHours(CALENDAR_DAY_START_HOUR);
-  const firstStart = Math.min(...timed.filter((event) => event.startMs >= dayStart).map((event) => event.startMs));
+  const windowStart = calendar.window ? Date.parse(calendar.window.start) : dayStart;
+  const firstStart = Math.min(...timed.filter((event) => event.startMs >= windowStart).map((event) => event.startMs));
   const start = today
     ? Math.max(dayStart, hourStart(now))
     : Math.min(dayFrom.getTime(), Number.isFinite(firstStart) ? hourStart(firstStart) : Infinity);
 
   if (timed.length === 0 && allDay.length === 0) {
     const name = dayName(offset);
+    // (today: "No more" once there were timed events, now all over)
+    const hadEvents = calendar.events.some((event) => !event.allDay);
     const text = today
-      ? 'No more events today'
+      ? hadEvents
+        ? 'No more events today'
+        : 'No events today'
       : offset === 1 || offset === -1
         ? `No events ${name.toLowerCase()}`
         : `No events on ${name}`;
@@ -1347,8 +2017,14 @@ function CalendarDay({ calendar, offset, refreshing, onRefresh }) {
 
   // The view's span: from `start` (above: the start of this hour, today, or
   // 8 am, or the first event's hour if earlier, not counting events from the
-  // day before), to the next midnight
-  const end = dayEnd;
+  // day before), to the next midnight, or on to the end of the last event if
+  // later (the day runs to the next sunrise, so its events can run into the
+  // small hours), but never more than CALENDAR_LONGEST_SPAN_HOURS. Events
+  // running past the end are drawn as if they carry on (see below).
+  const end = Math.min(
+    Math.max(dayEnd, ...timed.map((event) => event.endMs)),
+    start + CALENDAR_LONGEST_SPAN_HOURS * HOUR_MS,
+  );
   const span = Math.max(1, end - start);
   // Where a time falls, as a share of the view's height
   const at = (time) => Math.min(1, Math.max(0, (time - start) / span));
@@ -1371,31 +2047,17 @@ function CalendarDay({ calendar, offset, refreshing, onRefresh }) {
 
   return (
     <section ref={setOuterElement} className="calendar-day">
-      {allDay.length === 0 && (
-        <CalendarRefresh
-          refreshing={refreshing}
-          onRefresh={onRefresh}
-          label={hourLabel(start)}
-          className="beside-tasks"
-          style={besideTasks}
-        />
-      )}
+      <CalendarRefresh refreshing={refreshing} onRefresh={onRefresh} className="beside-tasks" style={besideTasks} />
       {allDay.length > 0 && (
         <div className="calendar-all-day">
-          {allDay.map((event, i) => (
+          {allDay.map((event) => (
             <div key={event.id} className="calendar-all-day-row">
-              {/* Beside the first all-day event, over the hour labels */}
-              {i === 0 && (
-                <CalendarRefresh
-                  refreshing={refreshing}
-                  onRefresh={onRefresh}
-                  label={hourLabel(start)}
-                  className="beside-all-day"
-                />
-              )}
               <div className="calendar-all-day-event" title={event.calendar} style={{ '--event-color': event.color }}>
                 <span className="calendar-event-fill" style={{ backgroundColor: event.color }} />
-                <span className="calendar-event-text">{event.title}</span>
+                  <span className="calendar-event-edge" />
+                <span className="calendar-event-text">
+                  <EmojiText text={event.title} />
+                </span>
               </div>
             </div>
           ))}
@@ -1427,25 +2089,29 @@ function CalendarDay({ calendar, offset, refreshing, onRefresh }) {
               const share = Math.max(at(event.drawnEndMs) - top, 0.02);
               // Rows of text that fit; with one, the time goes beside the title
               const rows = Math.max(1, Math.floor((share * height - inset + 0.01) / row));
+              // Running past the end of the view: drawn on a little further,
+              // fading out, with square bottom corners, as if it carries on
+              const continues = event.drawnEndMs > end;
               return (
                 <div
                   key={event.id}
-                  className={`calendar-event${rows === 1 ? ' one-row' : ''}`}
+                  className={`calendar-event${rows === 1 ? ' one-row' : ''}${continues ? ' continues' : ''}`}
                   title={`${event.calendar}${event.location ? ` · ${event.location}` : ''}`}
                   style={{
                     top: `${top * 100}%`,
-                    height: `${share * 100}%`,
+                    height: continues ? `calc(${share * 100}% + var(--calendar-continue))` : `${share * 100}%`,
                     left: `${(event.column / event.columns) * 100}%`,
                     width: `${100 / event.columns}%`,
                     '--event-color': event.color,
                   }}
                 >
                   <span className="calendar-event-fill" style={{ backgroundColor: event.color }} />
+                  <span className="calendar-event-edge" />
                   <div
                     className="calendar-event-title"
                     style={rows > 1 ? { WebkitLineClamp: rows - 1, maxHeight: `${(rows - 1) * row}px` } : undefined}
                   >
-                    {event.title}
+                    <EmojiText text={event.title} />
                   </div>
                   <div className="calendar-event-time">
                     {displayTimeFormat.format(new Date(event.startMs)).toLowerCase()}–
@@ -1470,31 +2136,9 @@ function sunEventsAround(sunTimes, now) {
   return { last: events[next - 1], next: events[next] };
 }
 
-// Whether it's night: between sunset and sunrise, by the sun times, checked
-// again at each sunrise and sunset. Before the sun times load, it's the
-// weather's own day or night flag.
-function useNight(sunTimes, weather) {
-  const [now, setNow] = useState(() => new Date());
-  const { last, next } = sunEventsAround(sunTimes, now);
-  useEffect(() => {
-    if (!next) return undefined;
-    // (a moment after the event, so it counts as passed)
-    const timer = setTimeout(() => setNow(new Date()), Math.max(0, Date.parse(next.time) - Date.now()) + 1000);
-    return () => clearTimeout(timer);
-  }, [next && next.time]);
-  // New sun times are checked against the time now
-  useEffect(() => setNow(new Date()), [sunTimes]);
-  if (last) return last.type === 'sunset';
-  if (next) return next.type === 'sunrise';
-  return weather?.current?.is_day === 0;
-}
-
 const WeatherDisplay = memo(function WeatherDisplay({ weather, pollen, sunTimes, moonEvents, forecast }) {
   const current = weather?.current;
   const code = current ? WEATHER_CODES.get(current.weather_code) : undefined;
-  const night = useNight(sunTimes, weather);
-  const icon = (night && code?.nightIcon) || code?.icon || UNKNOWN_ICON;
-  const clearNight = night && current?.weather_code === CLEAR_CODE;
   const condition = code?.name ?? (current ? `Weather code ${current.weather_code}` : MISSING);
   const aqi = typeof current?.us_aqi === 'number' ? Math.round(current.us_aqi) : null;
   return (
@@ -1507,37 +2151,42 @@ const WeatherDisplay = memo(function WeatherDisplay({ weather, pollen, sunTimes,
               <div className="weather-date">{date}</div>
               {/* The time, between the last sunrise or sunset and the next one */}
               <div className="time-row">
-                <SunEvent event={last} />
+                <div className="time-row-side">
+                  <SunEvent event={last} />
+                </div>
                 <div className="weather-time">{time}</div>
-                <SunEvent event={next} />
+                <div className="time-row-side end">
+                  <SunEvent event={next} />
+                </div>
               </div>
               {/* The forecast until the next sun event, under it */}
               <div className="forecast-row">
-                <div className="forecast-slot">
-                  <ForecastUntil forecast={forecast} now={now} until={next} />
-                </div>
+                <ForecastUntil forecast={forecast} now={now} until={next} />
               </div>
             </>
           );
         }}
       </DateAndTime>
-      <div className="weather-condition">{condition}</div>
       {/* The temperature's number and °F centered on the screen, with the
-          moon event and weather icon to their left and humidity and wind to
-          their right */}
+          moon event and weather icon to their left, the condition above them
+          and humidity and wind to their right, all centered up and down on
+          the icon */}
       <div className="weather-now">
         <div className="weather-now-left">
           <MoonEvent moonEvents={moonEvents} />
-          {clearNight ? <ClearNightIcon /> : <WeatherIcon icon={icon} />}
+          <CurrentWeatherIcon code={code} weather={weather} sunTimes={sunTimes} />
         </div>
-        <div className="weather-temperature">
-          <span className="temperature-value" title="Feels like">
-            {wholeFahrenheit(weather, 'apparent_temperature')}
-          </span>
-          <img className={`temperature-unit ${iconClass('fahrenheit')}`} src={whiteIconUrl('fahrenheit')} alt="°F" />
-          {/* Humidity and wind beside the °F */}
-          <div className="weather-temperature-side">
-            <HumidityAndWind weather={weather} />
+        <div className="weather-now-middle">
+          <div className="weather-condition">{condition}</div>
+          <div className="weather-temperature">
+            <span className="temperature-value" title="Feels like">
+              {wholeFahrenheit(weather, 'apparent_temperature')}
+            </span>
+            <img className={`temperature-unit ${iconClass('fahrenheit')}`} src={whiteIconUrl('fahrenheit')} alt="°F" />
+            {/* Humidity and wind beside the °F */}
+            <div className="weather-temperature-side">
+              <HumidityAndWind weather={weather} />
+            </div>
           </div>
         </div>
         <div className="weather-now-right" />
@@ -1639,14 +2288,39 @@ export default function App() {
   const [sunTimes, setSunTimes] = useState(null);
   // When each daily task was done (see server/TasksManager.js)
   const [tasks, setTasks] = useState(null);
-  // The calendar's events (see server/CalendarManager.js) for the day
-  // `calendarOffset` days from today, as chosen with the arrows by the title
+  // Whether tasks can be changed on any day, not just today and yesterday
+  // (a setting in Settings, off whenever the page loads)
+  const [tasksAnyDay, setTasksAnyDay] = useState(false);
+  // The wake-up time (HH:MM) for the sleep estimate, kept on the server
+  // (see server/UiManager.js)
+  const [wakeTime, setWakeTime] = useState('07:00');
+  // The UI flavor, kept on the server (see server/UiManager.js)
+  const [flavor, setFlavor] = useState(DEFAULT_FLAVOR);
+  // The calendar's events (see server/CalendarManager.js) for the day shown:
+  // `calendarOffset` days from today, as chosen with the arrows by the title,
+  // or on Today late at night with nothing left to come (`peekTomorrow`, see
+  // PEEK_TOMORROW_HOUR), tomorrow's
   const [calendar, setCalendar] = useState(null);
   const [calendarOffset, setCalendarOffset] = useState(0);
+  const [peekTomorrow, setPeekTomorrow] = useState(false);
+  // The calendar's "today" (see calendarTodayDate), moving on at sunrise
+  const [calendarBase, setCalendarBase] = useState(null);
+  calendarTodayDate = calendarBase;
+  const shownOffset = calendarOffset === 0 && peekTomorrow ? 1 : calendarOffset;
+  // Today's events, kept to tell whether any are left tonight
+  const [todayCalendar, setTodayCalendar] = useState(null);
   // Whether the refresh button's reload is under way
   const [calendarRefreshing, setCalendarRefreshing] = useState(false);
   const calendarOffsetRef = useRef(0);
-  calendarOffsetRef.current = calendarOffset;
+  calendarOffsetRef.current = shownOffset;
+  // The page's day, days from today (for Google Tasks, which follow it
+  // rather than the calendar's late-night look at tomorrow)
+  const calendarPageOffset = useRef(0);
+  calendarPageOffset.current = calendarOffset;
+  // Google Tasks for the day shown (see server/GoogleTasksManager.js), and
+  // tomorrow's while the Today page shows tomorrow's calendar late at night
+  const [googleTasks, setGoogleTasks] = useState(null);
+  const [googleTasksAhead, setGoogleTasksAhead] = useState(null);
   // The next two days' moonrises and moonsets (see server/TimeOfDayManager.js)
   const [moonEvents, setMoonEvents] = useState(null);
   // Today's pollen levels, from pollen.com (see server/PollenManager.js)
@@ -1681,6 +2355,9 @@ export default function App() {
   const [cloudInputs, setCloudInputs] = useState(NO_CLOUDS);
   // Whether the settings are showing, in place of the weather display
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // Whether the lighting panel is open
+  const [lightingOpen, setLightingOpen] = useState(false);
+  const closeLighting = useMemo(() => () => setLightingOpen(false), []);
   // Whether everything but the sky and the eye and bedtime buttons is hidden
   const [uiHidden, setUiHidden] = useState(false);
   // Bedtime: the screen is off (on the kiosk) and the page is covered in
@@ -1763,7 +2440,7 @@ export default function App() {
   // Tasks are only shown once they load, so a failure just leaves them out
   async function loadTasks() {
     try {
-      setTasks((await fetchJson('/api/tasks')).tasks);
+      setTasks(await fetchJson('/api/tasks'));
     } catch (err) {
       console.warn('Tasks unavailable:', err.message);
     }
@@ -1775,10 +2452,33 @@ export default function App() {
   async function loadCalendar(fresh = false) {
     const offset = calendarOffsetRef.current;
     if (fresh) setCalendarRefreshing(true);
+    // Google Tasks for the page's day, as the daily tasks are (today runs
+    // from sunrise to sunrise, and stays today when the calendar shows
+    // tomorrow's late at night), with overdue ones on the Today page
+    const date = dayFromToday(offset);
+    const tasksDate = dayFromToday(calendarPageOffset.current);
+    fetchJson(`/api/google-tasks?date=${tasksDate}&today=${dayFromToday(0)}${fresh ? '&fresh=true' : ''}`)
+      .then((result) => {
+        if (offset === calendarOffsetRef.current) setGoogleTasks(result);
+      })
+      .catch((err) => console.warn('Google Tasks unavailable:', err.message));
+    // ...and when the Today page shows tomorrow's calendar late at night,
+    // tomorrow's tasks too, under "Coming up tomorrow"
+    if (date !== tasksDate) {
+      fetchJson(`/api/google-tasks?date=${date}&today=${dayFromToday(0)}${fresh ? '&fresh=true' : ''}`)
+        .then((result) => {
+          if (offset === calendarOffsetRef.current) setGoogleTasksAhead(result);
+        })
+        .catch((err) => console.warn('Google Tasks unavailable:', err.message));
+    } else {
+      setGoogleTasksAhead(null);
+    }
     try {
-      const day = await fetchJson(`/api/calendar/today?date=${dayFromToday(offset)}${fresh ? '&fresh=true' : ''}`);
+      const day = await fetchJson(`/api/calendar/today?date=${date}${fresh ? '&fresh=true' : ''}`);
       // (unless the day was changed while it loaded)
       if (offset === calendarOffsetRef.current) setCalendar(day);
+      // Today's, too, when another day is shown
+      setTodayCalendar(offset === 0 ? day : await fetchJson(`/api/calendar/today?date=${dayFromToday(0)}`));
     } catch (err) {
       console.warn('Calendar unavailable:', err.message);
     } finally {
@@ -1786,12 +2486,45 @@ export default function App() {
     }
   }
 
-  // Marks a task done (since the last sunrise, `since`), showing it straight away
-  async function doTask(task, since) {
-    setTasks((current) => ({ ...current, [task]: [...((current && current[task]) || []), new Date().toISOString()] }));
+  // Completes a Google Task, showing it done straight away (and back to open
+  // if saving it to Google fails)
+  async function completeGoogleTask(task) {
+    const completed = new Date().toISOString();
+    const update = (current, done) =>
+      current
+        ? {
+            ...current,
+            tasks: current.tasks.map((t) => (t.id === task.id ? { ...t, done, completed: done ? completed : null } : t)),
+          }
+        : current;
+    const mark = (done) => {
+      setGoogleTasks((current) => update(current, done));
+      setGoogleTasksAhead((current) => update(current, done));
+    };
+    mark(true);
     try {
-      const query = `?since=${encodeURIComponent(since)}`;
-      setTasks((await fetchJson(`/api/tasks/${task}/done${query}`, { method: 'POST' })).tasks);
+      await fetchJson(
+        `/api/google-tasks/complete?listId=${encodeURIComponent(task.listId)}&taskId=${encodeURIComponent(task.id)}`,
+        { method: 'POST' },
+      );
+    } catch (err) {
+      console.warn('Could not complete the Google Task:', err.message);
+      mark(false);
+    }
+  }
+
+  // Marks a step of a task done on the day `date` (YYYY-MM-DD), showing it
+  // straight away
+  async function doTask(task, date) {
+    setTasks((current) => {
+      const days = { ...current.days };
+      const completed = { ...((days[date] && days[date].completedTasks) || {}) };
+      completed[task] = (completed[task] || 0) + 1;
+      days[date] = { completedTasks: completed };
+      return { ...current, days };
+    });
+    try {
+      setTasks(await fetchJson(`/api/tasks/${task}/done?date=${date}`, { method: 'POST' }));
     } catch (err) {
       console.warn('Could not mark the task done:', err.message);
       loadTasks();
@@ -1800,7 +2533,7 @@ export default function App() {
 
   async function resetTasks() {
     try {
-      setTasks((await fetchJson('/api/tasks/reset', { method: 'POST' })).tasks);
+      setTasks(await fetchJson(`/api/tasks/reset?date=${dayFromToday(0)}`, { method: 'POST' }));
     } catch (err) {
       console.warn('Could not reset the tasks:', err.message);
     }
@@ -1964,8 +2697,44 @@ export default function App() {
     loadPollen();
     loadForecast();
     loadTasks();
+    loadFlavor();
     loadSunTimes();
   }, []);
+
+  useEffect(() => applyFlavor(flavor), [flavor]);
+
+  // The server's UI flavor; until it loads (or if it can't), the default
+  async function loadFlavor() {
+    try {
+      const settings = await fetchJson('/api/ui');
+      setFlavor(settings.flavor);
+      setWakeTime(settings.wakeTime);
+    } catch (err) {
+      console.warn('UI settings unavailable:', err.message);
+    }
+  }
+
+  // Changes the wake-up time, here straight away and on the server
+  async function changeWakeTime(time) {
+    if (!/^\d{2}:\d{2}$/.test(time)) return;
+    setWakeTime(time);
+    try {
+      setWakeTime((await fetchJson(`/api/ui?wakeTime=${time}`, { method: 'POST' })).wakeTime);
+    } catch (err) {
+      console.warn('Could not save the wake-up time:', err.message);
+    }
+  }
+
+  // Changes the UI flavor, here straight away and on the server for every
+  // screen and reload
+  async function changeFlavor(name) {
+    setFlavor(name);
+    try {
+      setFlavor((await fetchJson(`/api/ui?flavor=${encodeURIComponent(name)}`, { method: 'POST' })).flavor);
+    } catch (err) {
+      console.warn('Could not save the UI flavor:', err.message);
+    }
+  }
 
   // The calendar is reloaded every few minutes, picking up changes and, after
   // midnight, the new day
@@ -1974,10 +2743,32 @@ export default function App() {
     return () => clearInterval(timer);
   }, []);
 
-  // A new day chosen is loaded straight away
+  // A new day chosen (or shown) is loaded straight away
   useEffect(() => {
     loadCalendar();
-  }, [calendarOffset]);
+  }, [shownOffset]);
+
+  // Late at night, with nothing left to come today, Today shows tomorrow's
+  // events early: checked every minute and as today's events load
+  useEffect(() => {
+    const check = () => setPeekTomorrow(nothingLeftTonight(todayCalendar, Date.now()));
+    check();
+    const timer = setInterval(check, CALENDAR_NOW_INTERVAL);
+    return () => clearInterval(timer);
+  }, [todayCalendar, calendarBase]);
+
+  // The calendar's "today" moves on at sunrise: checked every minute and as
+  // the sun times load, reloading the calendar when it changes
+  useEffect(() => {
+    const check = () => setCalendarBase(calendarToday(sunTimes, Date.now()));
+    check();
+    const timer = setInterval(check, CALENDAR_NOW_INTERVAL);
+    return () => clearInterval(timer);
+  }, [sunTimes]);
+
+  useEffect(() => {
+    if (calendarBase) loadCalendar();
+  }, [calendarBase]);
 
   // Lets controls show :active (their tap highlight) on touch screens, which
   // iOS only does once the page listens for touches
@@ -1995,8 +2786,9 @@ export default function App() {
 
   function goToSleep() {
     asleepSince.current = Date.now();
-    // Everything shows again on waking
+    // Everything shows again on waking, with the lighting panel closed
     setUiHidden(false);
+    setLightingOpen(false);
     setAsleep(true);
     setScreenPower(false);
   }
@@ -2133,6 +2925,18 @@ export default function App() {
           label={uiHidden ? 'Show everything' : 'Show just the sky'}
         />
       </button>
+      {/* The lighting panel's button, left of bedtime, and the panel under it */}
+      {!uiHidden && (
+        <button
+          type="button"
+          className="corner-button lighting-toggle"
+          onClick={() => setLightingOpen(!lightingOpen)}
+          title="Lighting"
+        >
+          <span className="lighting-logo">L|L</span>
+        </button>
+      )}
+      {!uiHidden && lightingOpen && <LightingPanel onClose={closeLighting} />}
       <button type="button" className="corner-button bedtime-toggle" onClick={goToSleep} title="Bedtime">
         <img className={iconClass('bedtime-mode')} src={whiteIconUrl('bedtime-mode')} alt="Bedtime: turn the screen off" />
       </button>
@@ -2152,18 +2956,31 @@ export default function App() {
           them by day covers both; filling the rest of the screen when the
           calendar has events to show */}
       {!settingsOpen && !uiHidden && (
-        <div className={`today-and-calendar${calendarHasEvents(calendar, calendarOffset) ? ' filled' : ''}`}>
+        <div className={`today-and-calendar${calendarHasEvents(calendar, shownOffset) ? ' filled' : ''}`}>
           <TodayTasks
             tasks={tasks}
-            sunTimes={sunTimes}
             onDo={doTask}
+            anyDay={tasksAnyDay}
+            wakeTime={shownOffset !== calendarOffset ? wakeTime : null}
             dayOffset={calendarOffset}
             onShiftDay={(change) => setCalendarOffset(calendarOffset + change)}
           />
-          {calendar && calendar.date === dayFromToday(calendarOffset) && (
+          <GoogleTasksList
+            tasks={googleTasks && googleTasks.configured ? googleTasks.tasks : []}
+            onComplete={completeGoogleTask}
+            foldDone={shownOffset !== calendarOffset}
+          />
+          {shownOffset !== calendarOffset && <div className="calendar-subtitle">Coming up tomorrow</div>}
+          {shownOffset !== calendarOffset && (
+            <GoogleTasksList
+              tasks={googleTasksAhead && googleTasksAhead.configured ? googleTasksAhead.tasks : []}
+              onComplete={completeGoogleTask}
+            />
+          )}
+          {calendar && calendar.date === dayFromToday(shownOffset) && (
             <CalendarDay
               calendar={calendar}
-              offset={calendarOffset}
+              offset={shownOffset}
               refreshing={calendarRefreshing}
               onRefresh={() => loadCalendar(true)}
             />
@@ -2174,7 +2991,29 @@ export default function App() {
         <p>
           <button type="button" onClick={resetTasks}>
             Reset Daily Tasks
-          </button>
+          </button>{' '}
+          <label className="checkbox-label">
+            <input type="checkbox" checked={tasksAnyDay} onChange={(event) => setTasksAnyDay(event.target.checked)} />
+            Allow changing tasks on any day
+          </label>
+        </p>
+        <p>
+          <label>
+            Wake-up time:{' '}
+            <TimeStepper value={wakeTime} onChange={changeWakeTime} />
+          </label>
+        </p>
+        <p>
+          <label>
+            UI style:{' '}
+            <select value={flavor} onChange={(event) => changeFlavor(event.target.value)}>
+              {FLAVORS.map(({ name, label }) => (
+                <option key={name} value={name}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </label>
         </p>
         {weather && <WeatherTable weather={weather} />}
         {weatherError && <p>Weather error: {weatherError}</p>}

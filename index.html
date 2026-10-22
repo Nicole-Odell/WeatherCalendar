@@ -7,6 +7,22 @@
   </head>
   <body>
     <div id="root"></div>
+    <!-- Filters the page's CSS uses: glass-halo turns a shape into a glow
+         around it in its own colors (blurred, strengthened, and with the
+         shape itself cut out), for the lighting panel's off power icon -->
+    <svg width="0" height="0" style="position: absolute">
+      <filter id="glass-halo" x="-50%" y="-50%" width="200%" height="200%">
+        <feGaussianBlur in="SourceGraphic" stdDeviation="2" result="blur" />
+        <feComponentTransfer in="blur" result="glow">
+          <feFuncA type="linear" slope="3.5" />
+        </feComponentTransfer>
+        <!-- (the shape at full strength, as its fill is see-through) -->
+        <feComponentTransfer in="SourceAlpha" result="shape">
+          <feFuncA type="linear" slope="50" />
+        </feComponentTransfer>
+        <feComposite in="glow" in2="shape" operator="out" />
+      </filter>
+    </svg>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

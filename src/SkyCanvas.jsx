@@ -28,13 +28,19 @@ export default function SkyCanvas({ onStatus, cloudSpeed, paused, fadeDuration, 
   useEffect(() => {
     const container = containerRef.current;
     const canvases = {};
-    for (const name of ['background', 'clouds', 'haze', 'precipitation']) {
+    // Stacked in this order (see skyRenderer.js): the moon is placed by the
+    // renderer's reports, the stars added over the sky, the rest stretched
+    // over the whole screen
+    for (const name of ['sky', 'stars', 'moon', 'clouds', 'haze', 'precipitation']) {
       canvases[name] = document.createElement('canvas');
-      canvases[name].className = 'sky-background';
+      canvases[name].className = name === 'moon' ? 'sky-moon' : `sky-background sky-${name}`;
       container.appendChild(canvases[name]);
     }
-    const report = ({ status }) => {
+    // Until the renderer says what they show, these have nothing to show
+    for (const name of ['stars', 'moon', 'clouds', 'precipitation']) canvases[name].style.display = 'none';
+    const report = ({ status, layers }) => {
       if (status) callbacks.current.onStatus?.(status);
+      if (layers) showLayers(canvases, layers);
     };
     renderer.current = startRenderer(canvases, report);
     return () => {
@@ -120,7 +126,7 @@ function startRenderer(canvases, report) {
   // Adding ?clouds=cpu to the page's address draws the clouds on the CPU even
   // where WebGL is fast, for testing
   const forceCpuClouds = new URLSearchParams(window.location.search).get('clouds') === 'cpu';
-  if (typeof Worker !== 'undefined' && 'transferControlToOffscreen' in canvases.background) {
+  if (typeof Worker !== 'undefined' && 'transferControlToOffscreen' in canvases.sky) {
     try {
       const worker = new SkyWorker();
       const offscreen = {};
@@ -147,6 +153,25 @@ function startRenderer(canvases, report) {
     forceCpuClouds,
     report: (message) =>
       report(message.status ? { status: { ...message.status, thread: 'page thread' } } : message),
+  });
+}
+
+// Shows the canvases the renderer reports on: hidden while they've nothing
+// to show (so they aren't composited), and the moon placed and sized (in
+// CSS pixels) where it's drawn
+function showLayers(canvases, { stars, clouds, precipitation, moon }) {
+  canvases.stars.style.display = stars ? '' : 'none';
+  canvases.clouds.style.display = clouds ? '' : 'none';
+  canvases.precipitation.style.display = precipitation ? '' : 'none';
+  if (!moon) {
+    canvases.moon.style.display = 'none';
+    return;
+  }
+  Object.assign(canvases.moon.style, {
+    display: '',
+    transform: `translate(${moon.left}px, ${moon.top}px)`,
+    width: `${moon.size}px`,
+    height: `${moon.size}px`,
   });
 }
 

@@ -1,53 +1,99 @@
 import { readCache, writeCache } from './cache.js';
+import { SunriseOn } from './TimeOfDayManager.js';
 
 /*
- * The daily tasks shown under "Today": when each was done, kept in
- * cache/tasks.json so they survive restarts and show the same on every
- * screen. The page counts a task as done today if it was done since the last
- * sunrise, so they reset at sunrise without the server doing anything.
+ * The daily tasks shown under "Today", kept by day in cache/tasks.json so
+ * they survive restarts and show the same on every screen. Days run from
+ * sunrise to sunrise (so a task done at 2 am counts for the day before), and
+ * are named by their date (YYYY-MM-DD). Each day is { completedTasks }: the
+ * tasks with any progress that day, and how much (1 when done; water counts
+ * a glass at a time, to 2). Every day with any progress is kept. (TaskRange
+ * is the days the page's calendar can be moved between.)
  */
 const CACHE_NAME = 'tasks';
 // The tasks, and how many times a day each is done (water is two glasses)
-export const TASKS = { sleep: 1, leave: 1, water: 2, work: 1, stretch: 1 };
-// Times older than this are dropped, as they no longer count (ms)
-const KEEP_FOR = 3 * 24 * 60 * 60 * 1000;
+export const TASKS = { sleep: 1, leave: 1, office: 1, water: 2, work: 1, stretch: 1 };
 
-// When each task was done, as { task: [ISO 8601 times] }
-async function readTasks() {
-  const cached = await readCache(CACHE_NAME);
-  const tasks = {};
-  for (const task of Object.keys(TASKS)) {
-    const times = Array.isArray(cached?.[task]) ? cached[task] : [];
-    tasks[task] = times.filter((time) => Date.now() - Date.parse(time) < KEEP_FOR);
-  }
-  return tasks;
-}
+// A date as YYYY-MM-DD on this computer's clock
+const localDate = (date) =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 
-/** Returns when each task was done, as { tasks: { task: [ISO 8601 times] } } */
-export async function GetTasks() {
-  return { tasks: await readTasks() };
+// The day (YYYY-MM-DD) a moment counts for: its date, or the day before if
+// it's before that date's sunrise
+function taskDay(moment) {
+  const date = new Date(moment.getFullYear(), moment.getMonth(), moment.getDate(), 12);
+  if (moment < SunriseOn(date)) date.setDate(date.getDate() - 1);
+  return localDate(date);
 }
 
 /**
- * Records `task` as done now, unless it's been done its number of times
- * since `since` (an ISO 8601 time, the last sunrise). Returns the tasks as
- * GetTasks does.
+ * The days the page's calendar can be moved between, around today
+ * (YYYY-MM-DD, by taskDay): from the Monday of last week to the Sunday of
+ * next week, as { start, end }
  */
-export async function DoTask(task, since) {
-  if (!(task in TASKS)) throw new Error(`Unknown task: ${task}`);
-  const tasks = await readTasks();
-  const start = Date.parse(since) || 0;
-  const doneSince = tasks[task].filter((time) => Date.parse(time) > start).length;
-  if (doneSince < TASKS[task]) {
-    tasks[task].push(new Date().toISOString());
-    await writeCache(CACHE_NAME, tasks);
-  }
-  return { tasks };
+export function TaskRange(today = taskDay(new Date())) {
+  const [year, month, day] = today.split('-').map(Number);
+  const monday = new Date(year, month - 1, day, 12);
+  monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
+  const start = new Date(monday);
+  start.setDate(start.getDate() - 7);
+  const end = new Date(monday);
+  end.setDate(end.getDate() + 13);
+  return { start: localDate(start), end: localDate(end) };
 }
 
-/** Clears every task, so none are done. Returns the tasks as GetTasks does. */
-export async function ResetTasks() {
-  const tasks = Object.fromEntries(Object.keys(TASKS).map((task) => [task, []]));
-  await writeCache(CACHE_NAME, tasks);
-  return { tasks };
+// Each day kept, as { date: { completedTasks: { task: progress } } }, read
+// from the cache (converting the old form, a list of times each task was
+// done, into days)
+async function readDays() {
+  const cached = await readCache(CACHE_NAME);
+  let days = {};
+  if (cached && cached.days) {
+    days = cached.days;
+  } else if (cached) {
+    for (const task of Object.keys(TASKS)) {
+      for (const time of Array.isArray(cached[task]) ? cached[task] : []) {
+        const day = taskDay(new Date(time));
+        const completed = (days[day] = days[day] || { completedTasks: {} }).completedTasks;
+        completed[task] = Math.min(TASKS[task], (completed[task] || 0) + 1);
+      }
+    }
+  }
+  return days;
+}
+
+/**
+ * Returns the tasks as { today, range: { start, end }, days }: today's date
+ * (by taskDay), the days the page can show (see TaskRange), and every day
+ * with any progress, as { date: { completedTasks: { task: progress } } }
+ */
+export async function GetTasks() {
+  const today = taskDay(new Date());
+  return { today, range: TaskRange(today), days: await readDays() };
+}
+
+/**
+ * Records a step of `task` on the day `date` (YYYY-MM-DD), unless it's
+ * already been done its number of times that day. Returns the tasks as
+ * GetTasks does.
+ */
+export async function DoTask(task, date) {
+  if (!(task in TASKS)) throw new Error(`Unknown task: ${task}`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date || '')) throw new Error(`Not a date: ${date}`);
+  const range = TaskRange();
+  const days = await readDays();
+  const completed = (days[date] = days[date] || { completedTasks: {} }).completedTasks;
+  if ((completed[task] || 0) < TASKS[task]) {
+    completed[task] = (completed[task] || 0) + 1;
+    await writeCache(CACHE_NAME, { days });
+  }
+  return { today: taskDay(new Date()), range, days };
+}
+
+/** Clears every task on the day `date` (YYYY-MM-DD). Returns the tasks as GetTasks does. */
+export async function ResetTasks(date) {
+  const days = await readDays();
+  delete days[date];
+  await writeCache(CACHE_NAME, { days });
+  return { today: taskDay(new Date()), range: TaskRange(), days };
 }

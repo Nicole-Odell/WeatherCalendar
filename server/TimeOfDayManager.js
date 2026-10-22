@@ -19,9 +19,10 @@ const SUN_FIELDS = [
  * time, in the location's timezone, for each field. A time is null if that
  * event does not happen that day. `events` lists every sunrise and sunset from
  * yesterday to tomorrow in order, as [{ type: 'sunrise' or 'sunset', time,
- * twilight }], so the last and next ones are always there; `twilight` is that
- * day's astronomical dawn (for a sunrise) or dusk (for a sunset), or null if
- * there's none (the sky never gets fully dark around midsummer). Data comes from the cache unless it is from an earlier date
+ * twilight, civil }], so the last and next ones are always there; `twilight`
+ * is that day's astronomical dawn (for a sunrise) or dusk (for a sunset), or
+ * null if there's none (the sky never gets fully dark around midsummer), and
+ * `civil` its civil dawn or dusk (the sun 6° below the horizon). Data comes from the cache unless it is from an earlier date
  * or is missing a field.
  */
 export async function GetSunTimes() {
@@ -29,7 +30,7 @@ export async function GetSunTimes() {
   const cached = await readCache(CACHE_NAME);
   if (
     cached?.date === today &&
-    cached.events?.every((event) => 'twilight' in event) &&
+    cached.events?.every((event) => 'twilight' in event && 'civil' in event) &&
     SUN_FIELDS.every((field) => field in cached.times)
   ) {
     return cached;
@@ -120,8 +121,18 @@ async function fetchSunTimes(date) {
   if (!today) throw new Error(`sunrise-sunset.org gave no times for ${date}`);
   const events = days
     .flatMap((day) => [
-      { type: 'sunrise', time: day.sunrise, twilight: day.astronomical_twilight_begin ?? null },
-      { type: 'sunset', time: day.sunset, twilight: day.astronomical_twilight_end ?? null },
+      {
+        type: 'sunrise',
+        time: day.sunrise,
+        twilight: day.astronomical_twilight_begin ?? null,
+        civil: day.civil_twilight_begin ?? null,
+      },
+      {
+        type: 'sunset',
+        time: day.sunset,
+        twilight: day.astronomical_twilight_end ?? null,
+        civil: day.civil_twilight_end ?? null,
+      },
     ])
     .filter(({ time }) => time)
     .sort((a, b) => Date.parse(a.time) - Date.parse(b.time));
@@ -224,6 +235,33 @@ export function GetMoonPosition(date = new Date()) {
     parallacticAngle: toDegrees(parallactic),
     brightLimb: mod(toDegrees(brightLimb - parallactic), 360),
   };
+}
+
+// The sun's elevation at sunrise (degrees): its top edge on the horizon,
+// with the atmosphere's refraction, as sunrise-sunset.org has it
+const SUNRISE_ELEVATION = -0.833;
+
+/**
+ * Returns sunrise (a Date) on the day `date` is in, on this computer's clock,
+ * worked out from the sun's position (see GetSunPosition) to within half a
+ * minute; midnight if the sun doesn't rise that day
+ */
+export function SunriseOn(date) {
+  const midnight = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const above = (time) => GetSunPosition(new Date(time)).elevation > SUNRISE_ELEVATION;
+  const step = 10 * 60 * 1000;
+  for (let time = midnight.getTime(); time < midnight.getTime() + 24 * 3600 * 1000; time += step) {
+    if (above(time) || !above(time + step)) continue;
+    let low = time;
+    let high = time + step;
+    while (high - low > 30 * 1000) {
+      const middle = (low + high) / 2;
+      if (above(middle)) high = middle;
+      else low = middle;
+    }
+    return new Date(Math.round(high));
+  }
+  return midnight;
 }
 
 // The moon's altitude at moonrise and moonset (degrees): its top edge on the

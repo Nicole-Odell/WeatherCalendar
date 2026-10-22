@@ -143,16 +143,19 @@ export const DEFAULT_CLOUD_GLOW = {
 };
 /*
  * The moon: `luminance` is the full moon's average luminance (cd/m²); other
- * phases are dimmer (see moonSurfaceBrightness). The sky's exposure squeezes
- * the moon's bright and dark areas together, so `contrast` stretches them
- * apart first: the moon picture's brightness (linear) is raised to this power
- * before setting the luminance at each pixel. 1 is the picture's own range.
+ * phases are dimmer (see moonSurfaceBrightness). `contrast` sets how far
+ * apart its bright and dark areas look (put on after the exposure, as a
+ * photograph shows them, see renderMoon): the moon picture's brightness
+ * (linear) is raised to this power. 1 is the picture's own range (its maria
+ * about 12 times dimmer than its brightest highlands); the real moon's is
+ * about 2.5 times (maria reflecting about 7% of light, highlands about
+ * 15–18%), which about 0.37 gives.
  * `glow` is the luminance of the glow around the moon's lit part where it
  * starts, as a share of the lit surface's average, and `glowWidth` is how far
- * it reaches, in moon radii (see moonGlow). `terminatorSoftness` is how wide
+ * it reaches, in moon radii (see renderMoon). `terminatorSoftness` is how wide
  * the blurred line between the lit and dark parts is, in moon radii.
  */
-export const DEFAULT_MOON = { luminance: 10000, contrast: 3, glow: 0.5, glowWidth: 0.1, terminatorSoftness: 0.25 };
+export const DEFAULT_MOON = { luminance: 10000, contrast: 0.4, glow: 0.5, glowWidth: 0.1, terminatorSoftness: 0.25 };
 // The glow falls off as a power of (1 + distance / scale), with the scale
 // this share of its reach: steep near the moon, then gentle
 // The moon's colors are worked out for bands of this many rows, which the
@@ -613,21 +616,150 @@ function colorBlend(light, color, amount) {
  * across: until it's dimmer than the exposure floor at full moon
  */
 export function moonGlowMargin(radius, settings) {
-  const { glow, glowWidth } = { ...DEFAULT_MOON, ...settings.moon };
+  const { glow, glowWidth } = hazyMoon(settings);
   return glow > 0 && glowWidth > 0 ? Math.ceil(glowWidth * radius) + 1 : 0;
 }
 
-/**
- * The glow's luminance by distance (pixels) from the moon's lit part: `peak`
- * there, falling off as a power of the distance so that it's down to the
- * exposure `floor` at `reach` pixels, and nothing beyond. Like light scattered
- * around a bright source, it drops steeply near the moon, then gently.
+/*
+ * The moon through haze: rather than just being dimmed by the haze drawn
+ * over it, its light spreads out, as moonlight scattering through it does.
+ * With the haze at its thickest, the glow reaches HAZE_GLOW_REACH times as
+ * far and starts HAZE_GLOW_BOOST times as bright, the line between lit and
+ * dark is HAZE_SOFTNESS times as soft, and the surface's detail is washed
+ * toward flat (its contrast down to HAZE_CONTRAST of what it was), all
+ * rising with the haze from none (see HAZE_START).
  */
-function moonGlow(peak, reach, floor) {
-  if (!(peak > floor && reach > 0)) return () => 0;
-  const scale = reach * GLOW_SCALE_SHARE;
+const HAZE_GLOW_REACH = 12;
+const HAZE_GLOW_BOOST = 2.5;
+const HAZE_SOFTNESS = 3;
+const HAZE_CONTRAST = 0.4;
+
+// How thick the haze is, 0 (none) to 1 (100% total cover)
+const hazeThicknessOf = (clouds) => clamp(((clouds ? clouds.total : 0) - HAZE_START) / (100 - HAZE_START), 0, 1);
+
+// The haze the moon's glow is spread for: as for 53% total cover even with
+// less (the look it's tuned to on a clear night), rising from there with
+// the haze to its full effect at 100%
+const MOON_HAZE_LEAST = hazeThicknessOf({ total: 53 });
+
+// The moon's settings (see DEFAULT_MOON), changed for the haze (see above)
+function hazyMoon(settings) {
+  const moon = { ...DEFAULT_MOON, ...settings.moon };
+  const haze = MOON_HAZE_LEAST + (1 - MOON_HAZE_LEAST) * hazeThicknessOf(settings.clouds);
+  return {
+    ...moon,
+    glow: moon.glow * (1 + (HAZE_GLOW_BOOST - 1) * haze),
+    glowWidth: moon.glowWidth * (1 + (HAZE_GLOW_REACH - 1) * haze),
+    terminatorSoftness: moon.terminatorSoftness * (1 + (HAZE_SOFTNESS - 1) * haze),
+    contrast: moon.contrast * (1 - (1 - HAZE_CONTRAST) * haze),
+  };
+}
+
+// How much the moon's markings are washed out by the haze, 0 (not at all)
+// to 1 (gone, the whole disc as bright as its brightest part), by raising
+// their black level toward white: none up to HAZE_START, then rising
+// exponentially (faster the thicker the haze, by HAZE_WASHOUT_CURVE) to all
+// at 100% cover. The brightest parts stay as bright either way.
+const HAZE_WASHOUT_CURVE = 3;
+const markingWashout = (clouds) =>
+  Math.expm1(HAZE_WASHOUT_CURVE * hazeThicknessOf(clouds)) / Math.expm1(HAZE_WASHOUT_CURVE);
+
+// The glow: the most it's scaled down to work out (1/this of the moon's
+// resolution), and how many cells across its reach it keeps when it is
+const GLOW_SCALE = 4;
+const GLOW_CELLS_PER_REACH = 12;
+
+// The glow falls off as a power of (1 + distance / scale), with the scale
+// this share of its reach: steep near the moon, then gentle
+const GLOW_FALLOFF_SCALE = 0.1;
+// Steps in glowByBlur's table, across the blurred shape's values from 1 down
+// to GLOW_TABLE_LEAST (beyond the glow's reach)
+const GLOW_TABLE_STEPS = 512;
+const GLOW_TABLE_LEAST = 1e-4;
+
+/**
+ * The glow's luminance from the blurred lit shape's value at a pixel (0–1),
+ * or null if there's no glow to show: `peak` at the shape's edge (where the
+ * blur is half), falling with the distance beyond it as a power of
+ * (1 + distance / scale) to the exposure `floor` at `reach`. The distance
+ * comes from the blur's value (the blur being a Gaussian a third of the
+ * reach wide, three widths out at the reach). Worked out once into a table,
+ * by the value's logarithm, so it's quick to look up for every pixel.
+ */
+function glowByBlur(peak, reach, floor) {
+  if (!(peak > floor && reach > 0)) return null;
+  const scale = reach * GLOW_FALLOFF_SCALE;
   const power = Math.log(peak / floor) / Math.log(1 + reach / scale);
-  return (distance) => (distance >= reach ? 0 : peak * (1 + distance / scale) ** -power);
+  const sigma = reach / 3;
+  const logLeast = Math.log(GLOW_TABLE_LEAST);
+  const table = new Float32Array(GLOW_TABLE_STEPS + 1);
+  for (let i = 0; i <= GLOW_TABLE_STEPS; i++) {
+    const value = Math.exp((logLeast * i) / GLOW_TABLE_STEPS);
+    const distance = value >= 0.5 ? 0 : sigma * inverseNormal(1 - value);
+    table[i] = distance >= reach ? 0 : peak * (1 + distance / scale) ** -power;
+  }
+  return (value) => {
+    if (!(value > GLOW_TABLE_LEAST)) return 0;
+    if (value >= 1) return table[0];
+    const position = (Math.log(value) / logLeast) * GLOW_TABLE_STEPS;
+    const i = Math.floor(position);
+    const t = position - i;
+    return table[i] * (1 - t) + table[Math.min(GLOW_TABLE_STEPS, i + 1)] * t;
+  };
+}
+
+// The standard normal distribution's inverse: the number of widths `p` of it
+// lies below (Acklam's approximation, good to about 1e-9)
+function inverseNormal(p) {
+  const a = [-39.69683028665376, 220.9460984245205, -275.9285104469687, 138.357751867269, -30.66479806614716, 2.506628277459239];
+  const b = [-54.47609879822406, 161.5858368580409, -155.6989798598866, 66.80131188771972, -13.28068155288572];
+  const c = [-0.007784894002430293, -0.3223964580411365, -2.400758277161838, -2.549732539343734, 4.374664141464968, 2.938163982698783];
+  const d = [0.007784695709041462, 0.3224671290700398, 2.445134137142996, 3.754408661907416];
+  const low = 0.02425;
+  if (p <= 0) return -Infinity;
+  if (p >= 1) return Infinity;
+  if (p < low) {
+    const q = Math.sqrt(-2 * Math.log(p));
+    return (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1);
+  }
+  if (p > 1 - low) {
+    const q = Math.sqrt(-2 * Math.log(1 - p));
+    return -(((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1);
+  }
+  const q = p - 0.5;
+  const r = q * q;
+  return ((((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q) / (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1);
+}
+
+/**
+ * `values` (size × size) blurred, about as a Gaussian of `sigma` pixels
+ * would (three box blurs each way, using running sums, so it's quick
+ * whatever the width), as a new array
+ */
+function blurred(values, size, sigma) {
+  const radius = Math.max(0, Math.round((Math.sqrt((12 * sigma * sigma) / 3 + 1) - 1) / 2));
+  let from = Float32Array.from(values);
+  let to = new Float32Array(values.length);
+  if (radius === 0) return from;
+  const span = 2 * radius + 1;
+  for (let pass = 0; pass < 3; pass++) {
+    for (const across of [true, false]) {
+      for (let line = 0; line < size; line++) {
+        const at = (i) => (across ? line * size + i : i * size + line);
+        let sum = 0;
+        for (let i = -radius; i <= radius; i++) if (i >= 0 && i < size) sum += from[at(i)];
+        for (let i = 0; i < size; i++) {
+          to[at(i)] = sum / span;
+          const leaving = i - radius;
+          const coming = i + radius + 1;
+          if (leaving >= 0) sum -= from[at(leaving)];
+          if (coming < size) sum += from[at(coming)];
+        }
+      }
+      [from, to] = [to, from];
+    }
+  }
+  return from;
 }
 
 // Each moon picture's levels (see pictureLevels), kept for as long as the picture is
@@ -681,17 +813,16 @@ function moonSurfaceBrightness(phase) {
  * counterclockwise from up), with the line between lit and dark half an
  * ellipse; without it, the right while waxing and the left while waning. Like the stars, the moon's own light is white at full on-screen
  * brightness and takes on eigengrau's hue and saturation as it dims toward
- * black. The glow fades out from the moon's lit part (see moonGlow), so it
+ * black. The glow is the moon's lit part blurred outward (see renderMoon), so it
  * follows the phase, softening the line between lit and dark, and hides stars
  * only as much as it outshines them.
  */
 export function renderMoon(pixels, size, picture, diameter, top, screenHeight, settings) {
   const { toScreenUndimmed: toScreen, skyAt } = prepareScene(settings);
-  const { luminance, contrast, glow, glowWidth, terminatorSoftness, phase: givenPhase, rotation, brightLimb } = {
-    ...DEFAULT_MOON,
-    ...settings.moon,
-  };
+  const { luminance, contrast, glow, glowWidth, terminatorSoftness, phase: givenPhase, rotation, brightLimb } =
+    hazyMoon(settings);
   const phase = givenPhase ?? 0.5;
+  const washout = markingWashout(settings.clouds);
   const radius = diameter / 2;
   const center = size / 2;
 
@@ -700,6 +831,14 @@ export function renderMoon(pixels, size, picture, diameter, top, screenHeight, s
   const covered = coverage.reduce((sum, value) => sum + value, 0);
   const average = coverage.reduce((sum, value, level) => sum + value * weights[level], 0) / covered || 1;
   const surface = (luminance * moonSurfaceBrightness(phase)) / average;
+  // The brightest the picture is (of the levels covering much of it, so a
+  // few odd pixels don't count)
+  let brightest = 0;
+  let seen = 0;
+  for (let level = 255; level >= 0 && seen < covered * 0.02; level--) {
+    seen += coverage[level];
+    brightest = weights[level];
+  }
 
   // The phase: across the disc toward its lit side (`litX`, `litY` on
   // screen), it's lit beyond `terminator` times the disc's half-width there.
@@ -718,8 +857,69 @@ export function renderMoon(pixels, size, picture, diameter, top, screenHeight, s
   // lit surface to below the exposure floor
   const blur = Math.max(MIN_TERMINATOR_SOFTNESS, terminatorSoftness * radius);
   const blurDecades = Math.log10(Math.max(10, (surface * Math.max(...weights)) / settings.exposure.floor));
-  // The glow, starting at a share of the lit surface's average luminance
-  const glowAt = moonGlow(glow * luminance * moonSurfaceBrightness(phase), glowWidth * radius, settings.exposure.floor);
+  // Where across the disc it's lit (0 dark to 1 lit), with the line between
+  // softened as the surface is
+  const litShare = (dx, dy) => {
+    const along = (dx * litX + dy * litY) / radius;
+    const across = (dy * litX - dx * litY) / radius;
+    const halfWidth = Math.sqrt(Math.max(0, 1 - across * across));
+    return (along - halfWidth * terminator) * radius;
+  };
+  // The glow: the lit part's shape (a white disc with the dark part shaded
+  // off as the surface is), blurred, as light scattered around it, in front
+  // of the moon as well as around it. The blur gives each pixel's distance
+  // from that shape (as a Gaussian-blurred edge falls off with distance), and
+  // the glow falls with it as light scattered round a bright source does:
+  // steeply near it, then gently, from a share (`glow`) of the lit surface's
+  // average down to the exposure floor at its reach (see glowByBlur). Wide
+  // glows are worked out at lower resolution (quicker, and too soft to show
+  // it), up to 1/GLOW_SCALE, and smoothly scaled up (see glowAt).
+  const glowPeak = glow * luminance * moonSurfaceBrightness(phase);
+  const reach = glowWidth * radius;
+  const scale = clamp(Math.round(reach / GLOW_CELLS_PER_REACH), 1, GLOW_SCALE);
+  const cells = Math.ceil(size / scale);
+  const glowMap = new Float32Array(cells * cells);
+  const glowOf = glowByBlur(glowPeak, reach, settings.exposure.floor);
+  if (glowOf && reach > 0) {
+    const shape = new Float32Array(cells * cells);
+    const cellRadius = radius / scale;
+    for (let row = 0; row < cells; row++) {
+      const dy = (row + 0.5) * scale - center;
+      for (let column = 0; column < cells; column++) {
+        const dx = (column + 0.5) * scale - center;
+        const cover = clamp(cellRadius + 0.5 - Math.sqrt(dx * dx + dy * dy) / scale, 0, 1);
+        // (the lit part up to where its light starts to fade toward the dark,
+        // as the glow takes over from there)
+        if (cover > 0) shape[row * cells + column] = cover * clamp((litShare(dx, dy) - blur / 2) / scale + 0.5, 0, 1);
+      }
+    }
+    const spread = blurred(shape, cells, reach / 3 / scale);
+    // (faded out toward the canvas's edge, so it never ends in a line)
+    const half = cells / 2;
+    for (let row = 0; row < cells; row++) {
+      for (let column = 0; column < cells; column++) {
+        const i = row * cells + column;
+        const fromCenter = Math.hypot(row + 0.5 - half, column + 0.5 - half) / half;
+        glowMap[i] = spread[i] * (1 - smoothstep(0.7, 1, fromCenter));
+      }
+    }
+  }
+  // The glow at a pixel, from the blurred shape between the cells it falls among
+  const glowAt = (row, column) => {
+    if (!glowOf) return 0;
+    const y = clamp((row + 0.5) / scale - 0.5, 0, cells - 1);
+    const x = clamp((column + 0.5) / scale - 0.5, 0, cells - 1);
+    const y0 = Math.floor(y);
+    const x0 = Math.floor(x);
+    const y1 = Math.min(cells - 1, y0 + 1);
+    const x1 = Math.min(cells - 1, x0 + 1);
+    const fy = y - y0;
+    const fx = x - x0;
+    const top = glowMap[y0 * cells + x0] * (1 - fx) + glowMap[y0 * cells + x1] * fx;
+    const bottom = glowMap[y1 * cells + x0] * (1 - fx) + glowMap[y1 * cells + x1] * fx;
+    const value = top * (1 - fy) + bottom * fy;
+    return glowOf(value);
+  };
 
   // The on-screen color for the light the moon adds, in steps (see
   // MOON_LIGHT_STEPS_PER_E), worked out as needed for each band of rows
@@ -727,6 +927,7 @@ export function renderMoon(pixels, size, picture, diameter, top, screenHeight, s
   const shown = new Float32Array(lightSteps * 3);
   const known = new Uint8Array(lightSteps);
   const skyShown = [0, 0, 0];
+  const targetColor = [0, 0, 0];
   let sky = null;
   let skyWeight = 0;
   const colorFor = (light) => {
@@ -742,9 +943,13 @@ export function renderMoon(pixels, size, picture, diameter, top, screenHeight, s
       // The light it adds on screen (linear): in proportion to how much it
       // brightens the sky, but no more than it shows against black. By day
       // that's its share of the sky's light, so it's faint but visible; at
-      // night it's how the moon looks on its own.
+      // night it's how the moon looks on its own. Where the sky's shown as
+      // black but isn't quite (below the exposure's floor, or dimmed in
+      // twilight), that share is nothing, so it's at least what it brightens
+      // the sky by through the exposure: against black, its own brightness.
       const besideSky = sky.luminance > 0 ? (skyWeight * moonLuminance) / sky.luminance : Infinity;
-      const added = Math.min(besideSky, decodeSrgb(moonBrightness));
+      const overSky = decodeSrgb(toScreen(sky.luminance + moonLuminance)) - decodeSrgb(toScreen(sky.luminance));
+      const added = Math.max(Math.min(besideSky, decodeSrgb(moonBrightness)), overSky);
       for (let channel = 0; channel < 3; channel++) {
         const linear = Math.min(1, sky.rgb[channel] + (added * moonColor[channel]) / moonWeight);
         shown[step * 3 + channel] = toScreenValue(linear, channel);
@@ -789,40 +994,41 @@ export function renderMoon(pixels, size, picture, diameter, top, screenHeight, s
         if (discCover > 0) brightness /= discCover;
       }
 
-      // The moon's own light where it's lit, and the glow over its dark part,
-      // by the distance across to the line between lit and dark
-      let light = 0;
+      // The moon's own light where it's lit (by the distance across to the
+      // line between lit and dark), and the glow around and in front of its
+      // dark part, taking over as the surface's light fades: not over the lit
+      // part, which outshines scattered light many times over (a moon's
+      // aureole is far fainter than its surface)
+      // The surface's light is worked out as if it were all as bright as its
+      // brightest parts, and its markings (`texture`, the picture's
+      // brightness over its brightest, so they only darken it, never pushing
+      // it past white) put on after, on screen, as a photograph shows them:
+      // through the exposure, which is logarithmic, they'd be all but lost at
+      // night, and by day pushed to white or to the sky's color
+      let light = glowAt(row, column);
+      let texture = 1;
       if (discCover > 0) {
-        const along = (dx * litX + dy * litY) / radius;
-        const across = (dy * litX - dx * litY) / radius;
-        const halfWidth = Math.sqrt(Math.max(0, 1 - across * across));
-        const beyondTerminator = (along - halfWidth * terminator) * radius;
-        const lit = 10 ** (-blurDecades * smoothstep(blur / 2, -blur / 2, beyondTerminator));
-        // (from where the blur starts, so the light only falls toward the dark part)
-        const intoDark = Math.max(0, blur / 2 - beyondTerminator);
-        light = discCover * (surface * brightness * lit + (1 - lit) * glowAt(intoDark));
-      }
-      // The glow outside the disc, by distance from the moon's lit part.
-      // Beside the dark side of its edge, that's the distance to the edge
-      // plus the gap across the dark part to the line between lit and dark
-      // (|x| times (1 + terminator) radii, from the half-ellipse).
-      if (discCover < 1) {
-        const distance = Math.sqrt(dx * dx + dy * dy);
-        const beyondEdge = Math.max(0, distance - radius);
-        const towardLit = distance > 0 ? (dx * litX + dy * litY) / distance : 0;
-        const darkGap = towardLit < 0 ? -towardLit * radius * (1 + terminator) : 0;
-        light += (1 - discCover) * glowAt(beyondEdge + darkGap);
+        const lit = 10 ** (-blurDecades * smoothstep(blur / 2, -blur / 2, litShare(dx, dy)));
+        const surfaceLight = discCover * surface * brightest * lit;
+        const glowLight = (1 - discCover * lit) * light;
+        light = surfaceLight + glowLight;
+        const marking = washout + (1 - washout) * (brightness / brightest);
+        if (light > 0) texture = (surfaceLight * marking + glowLight) / light;
       }
 
       const offset = (row * size + column) * 4;
       const step = colorFor(light);
+      // The moon's color on screen: what it adds over the sky, scaled by its
+      // markings
+      for (let channel = 0; channel < 3; channel++) {
+        const added = step >= 0 ? shown[step * 3 + channel] - skyShown[channel] : 0;
+        targetColor[channel] = clamp(skyShown[channel] + added * texture, 0, 255);
+      }
       // How opaque the pixel is: the disc hides what's behind it, and the
       // glow hides stars as much as it brightens the sky
       let brighter = 0;
-      if (step >= 0) {
-        for (let channel = 0; channel < 3; channel++) {
-          brighter = Math.max(brighter, shown[step * 3 + channel] - skyShown[channel]);
-        }
+      for (let channel = 0; channel < 3; channel++) {
+        brighter = Math.max(brighter, targetColor[channel] - skyShown[channel]);
       }
       const alpha = Math.max(discCover, clamp(brighter / GLOW_OPAQUE_STEPS, 0, 1));
       if (alpha === 0) {
@@ -831,8 +1037,7 @@ export function renderMoon(pixels, size, picture, diameter, top, screenHeight, s
       }
       // The color that gives the target over the sky at this opacity
       for (let channel = 0; channel < 3; channel++) {
-        const target = step >= 0 ? shown[step * 3 + channel] : skyShown[channel];
-        pixels[offset + channel] = skyShown[channel] + (target - skyShown[channel]) / alpha;
+        pixels[offset + channel] = skyShown[channel] + (targetColor[channel] - skyShown[channel]) / alpha;
       }
       pixels[offset + 3] = Math.round(255 * alpha);
     }
@@ -1218,19 +1423,34 @@ const STARS = (() => {
  * stars, so they cover them.
  */
 function starlightScale(settings, black, full) {
-  const { toScreen, toScreenUndimmed, skyAt } = prepareScene(settings);
-  const { floor } = settings.exposure;
-  const brightestSky = Math.max(...settings.colors.map((color) => color.brightness));
+  const { toScreen, toScreenUndimmed } = prepareScene(settings);
+  const skyLuminances = settings.colors.map((color) => color.brightness);
+  const brightestSky = Math.max(...skyLuminances);
   // 0 when the whole sky is black, 1 once it's bright enough to use the sky's
   // exposure (by its real brightness, without twilight dimming)
   const skyExposureShare = clamp(toScreenUndimmed(brightestSky) / STAR_DARK_ADAPTATION_START, 0, 1);
-  return (luminance, up) => {
-    const sky = skyAt(up).luminance;
+  const logRange = Math.log(full / black);
+  // The starlight's brightness against sky of luminance `sky`
+  const againstSky = (luminance, sky) => {
     if (luminance <= sky) return 0;
-    const darkAdapted = clamp(Math.log(luminance / black) / Math.log(full / black), 0, 1);
+    const darkAdapted = clamp(Math.log(luminance / black) / logRange, 0, 1);
     const overSky = clamp(toScreen(sky + luminance) - toScreen(sky), 0, 1);
     return darkAdapted + (overSky - darkAdapted) * skyExposureShare;
   };
+  // The sky's luminance `up` the screen, worked out without making anything
+  // (this runs for every star and glow row)
+  const last = skyLuminances.length - 1;
+  const skyLuminanceAt = (up) => {
+    const position = up * last;
+    const i = Math.min(Math.floor(position), last - 1);
+    const t = position - i;
+    return skyLuminances[i] * (1 - t) + skyLuminances[i + 1] * t;
+  };
+  const starlight = (luminance, up) => againstSky(luminance, skyLuminanceAt(up));
+  starlight.againstSky = againstSky;
+  starlight.skyLuminanceAt = skyLuminanceAt;
+  starlight.darkestSky = Math.min(...skyLuminances);
+  return starlight;
 }
 
 // Glow strength (0–1) for each pixel of a width × height image, kept for reuse
@@ -1259,19 +1479,26 @@ function glowStrengths(width, height) {
 export function renderStarGlow(pixels, width, height, settings) {
   const { floor } = settings.exposure;
   const starlight = starlightScale(settings, floor, STAR_GLOW_SCALE * floor);
+  // Where the sky is at least as bright as the glow at its brightest, none
+  // of it shows, so those rows (and, through most of twilight, the whole
+  // image) are left clear, which looks the same over the sky
+  const brightestGlow = floor * STAR_GLOW_BRIGHTNESS;
+  if (starlight.darkestSky >= brightestGlow) return;
   const strengths = glowStrengths(width, height);
   for (let row = 0; row < height; row++) {
+    const sky = starlight.skyLuminanceAt(1 - (row + 0.5) / height);
+    if (sky >= brightestGlow) continue;
     for (let column = 0; column < width; column++) {
       const index = row * width + column;
       const strength = strengths[index];
       const level =
-        strength > 0
-          ? starlight(floor * (1 + (STAR_GLOW_BRIGHTNESS - 1) * strength), 1 - (row + 0.5) / height)
-          : 0;
+        strength > 0 ? starlight.againstSky(floor * (1 + (STAR_GLOW_BRIGHTNESS - 1) * strength), sky) : 0;
+      // As its tint at the glow's level of opacity: over the dark sky, the
+      // same as adding the light (see drawStars)
       for (let channel = 0; channel < 3; channel++) {
-        pixels[index * 4 + channel] = 255 * level * STAR_GLOW_TINT[channel];
+        pixels[index * 4 + channel] = 255 * STAR_GLOW_TINT[channel];
       }
-      pixels[index * 4 + 3] = 255;
+      pixels[index * 4 + 3] = 255 * level;
     }
   }
 }
@@ -1316,8 +1543,7 @@ export function starColors(settings) {
 /**
  * Draws the stars, in `colors` from starColors, onto the canvas `context`
  * (width × height pixels), each `starSize` pixels square, or twice that for
- * those at or above settings.stars.largeLevel, to go over the sky with a
- * screen blend
+ * those at or above settings.stars.largeLevel, to go over the sky
  */
 export function drawStars(context, width, height, colors, starSize, settings) {
   const { largeLevel } = { ...DEFAULT_STARS, ...settings.stars };
@@ -1326,7 +1552,13 @@ export function drawStars(context, width, height, colors, starSize, settings) {
     const [red, green, blue] = colors.subarray(i * 3, i * 3 + 3);
     if (red === 0 && green === 0 && blue === 0) return;
     const size = star.magnitude <= largeMagnitude ? 2 * starSize : starSize;
-    context.fillStyle = `rgb(${red} ${green} ${blue})`;
+    // Its light added to the sky, done with plain transparency (cheap for the
+    // page to show, where blending modes are slow on the Pi 3): its color at
+    // full strength, as opaque as it's bright. For white stars that's
+    // exactly the screen blend of its light over the sky; for tinted ones,
+    // nearly.
+    const opacity = Math.max(red, green, blue) / 255;
+    context.fillStyle = `rgba(${Math.round(red / opacity)}, ${Math.round(green / opacity)}, ${Math.round(blue / opacity)}, ${opacity.toFixed(3)})`;
     context.fillRect(Math.floor(star.across * width), Math.floor((1 - star.up) * height), size, size);
   });
 }
@@ -1428,13 +1660,36 @@ function prepareScene({
  * as the sky is drawn (with twilight dimming), from the scene's `colors`,
  * `exposure` and `sunElevation`
  */
-export function topSkyBrightness({ colors, exposure, sunElevation }) {
+export function topSkyBrightness(scene) {
+  return skyBrightnessAt(scene, 1);
+}
+
+/**
+ * The on-screen brightness (0–1) of the sky color `up` the screen (0 at the
+ * bottom, 1 at the top), as the sky is drawn (with twilight dimming), from
+ * the scene's `colors`, `exposure` and `sunElevation`
+ */
+export function skyBrightnessAt({ colors, exposure, sunElevation }, up) {
   const toScreen = exposureScale(
     colors.map((color) => color.brightness),
     exposure,
     sunElevation,
   );
-  return toScreen(colors[colors.length - 1].brightness);
+  const position = clamp(up, 0, 1) * (colors.length - 1);
+  const i = Math.min(Math.floor(position), colors.length - 2);
+  const t = position - i;
+  return toScreen(colors[i].brightness * (1 - t) + colors[i + 1].brightness * t);
+}
+
+/**
+ * The sky's on-screen color `up` the screen (0 at the bottom, 1 at the top),
+ * as the sky is drawn, as [red, green, blue] (0–255), from the scene's
+ * `colors`, `exposure` and `sunElevation` (clouds and haze aren't included)
+ */
+export function skyColorAt(scene, up) {
+  const { skyAt } = prepareScene({ ...scene, clouds: { total: 0, low: 0, mid: 0, high: 0 } });
+  const { rgb } = skyAt(clamp(up, 0, 1));
+  return rgb.map((value, channel) => Math.round(clamp(toScreenValue(value, channel), 0, 255)));
 }
 
 /**
@@ -1464,7 +1719,7 @@ function exposureScale(skyLuminances, { floor, ceiling }, sunElevation = 0) {
  * TWILIGHT_DIMMING_POWER once the sun is TWILIGHT_DIMMING_RAMP degrees lower,
  * so it never jumps.
  */
-const TWILIGHT_DIMMING_POWER = 1.8;
+const TWILIGHT_DIMMING_POWER = 2.2;
 // The sun's elevation at sunrise and sunset (degrees), as the sun times use:
 // its top edge on the horizon, with the atmosphere's refraction
 const SUNSET_ELEVATION = -0.833;

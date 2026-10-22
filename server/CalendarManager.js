@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ical from 'node-ical';
+import { SunriseOn } from './TimeOfDayManager.js';
 
 /*
  * Today's events from Google Calendar (or any calendar with an iCal feed),
@@ -64,7 +65,8 @@ async function feedEvents(url, fresh = false) {
   const cached = feeds.get(url);
   if (!fresh && cached && Date.now() - cached.fetchedAt < FEED_REFRESH_MS) return cached.events;
   try {
-    const response = await fetch(url);
+    // (webcal:// is how calendar apps are told to subscribe: it's https)
+    const response = await fetch(url.replace(/^webcals?:\/\//i, 'https://'));
     if (!response.ok) throw new Error(`calendar feed request failed (${response.status})`);
     const events = await ical.async.parseICS(await response.text());
     feeds.set(url, { fetchedAt: Date.now(), events });
@@ -104,8 +106,12 @@ const localDate = (date) =>
  * - events: [{ id, calendar (its name), color (its calendar's, as CSS), title,
  *   location, allDay, start, end }]
  *   with start and end as ISO 8601 times (for all-day events, the day's
- *   midnights), all-day events first, then by start time. Events that began
- *   before the day or end after it are included.
+ *   midnights), all-day events first, then by start time. The day runs from
+ *   its sunrise to the next day's (like the display's daily tasks), so timed
+ *   events in the small hours belong to the evening before: those between
+ *   sunrise and the next sunrise are included, along with any that began
+ *   before it or end after it. All-day events are by their date.
+ * - window: { start, end }, the sunrises the day runs between (ISO 8601)
  * - errors: [{ calendar, error }] for calendars that couldn't be read
  * With `fresh`, every feed is fetched again rather than taken from the last
  * fetch.
@@ -114,6 +120,9 @@ export async function GetEvents(date = new Date(), { fresh = false } = {}) {
   const calendars = await readCalendars();
   const { start: dayStart, end: dayEnd } = dayAround(date);
   const today = localDate(dayStart);
+  // The day's timed events are from its sunrise to the next day's
+  const windowStart = SunriseOn(dayStart);
+  const windowEnd = SunriseOn(dayEnd);
   const events = [];
   const errors = [];
   const shown = calendars.map((calendar, index) => ({
@@ -132,8 +141,8 @@ export async function GetEvents(date = new Date(), { fresh = false } = {}) {
         for (const event of Object.values(parsed)) {
           if (event.type !== 'VEVENT' || event.status === 'CANCELLED') continue;
           const instances = ical.expandRecurringEvent(event, {
-            from: dayStart,
-            to: dayEnd,
+            from: dayStart < windowStart ? dayStart : windowStart,
+            to: dayEnd > windowEnd ? dayEnd : windowEnd,
             expandOngoing: true,
           });
           for (const instance of instances) {
@@ -145,7 +154,7 @@ export async function GetEvents(date = new Date(), { fresh = false } = {}) {
               const first = allDayDate(start);
               const last = instance.end ? allDayDate(end) : first;
               if (!(first <= today && (today < last || first === last))) continue;
-            } else if (!(start < dayEnd && end > dayStart)) {
+            } else if (!(start < windowEnd && end > windowStart)) {
               continue;
             }
             if (instance.event && instance.event.status === 'CANCELLED') continue;
@@ -168,5 +177,12 @@ export async function GetEvents(date = new Date(), { fresh = false } = {}) {
     }),
   );
   events.sort((a, b) => Number(b.allDay) - Number(a.allDay) || a.start.localeCompare(b.start));
-  return { configured: calendars.length > 0, date: today, calendars: shown, events, errors };
+  return {
+    configured: calendars.length > 0,
+    date: today,
+    window: { start: windowStart.toISOString(), end: windowEnd.toISOString() },
+    calendars: shown,
+    events,
+    errors,
+  };
 }

@@ -46,6 +46,13 @@ export const DAY_BACK_ICON = 'chevron-left-24-regular';
 export const DAY_ON_ICON = 'chevron-right-24-regular';
 // The calendar's refresh button
 export const REFRESH_ICON = 'arrow-clockwise-24-regular';
+// The lighting panel's power button
+export const POWER_ICON = 'power-24-regular';
+// ...its brightness sliders, and its automations' add and delete buttons
+export const BRIGHTNESS_LOW_ICON = 'brightness-low-24-regular';
+export const BRIGHTNESS_HIGH_ICON = 'brightness-high-24-regular';
+export const ADD_ICON = 'add-24-regular';
+export const DELETE_ICON = 'dismiss-24-regular';
 
 // Icons for today's tasks (see TodayTasks in App.jsx): custom icons, drawn
 // empty while not done and filled once done
@@ -56,6 +63,8 @@ export const CUSTOM_TASK_ICONS = {
   sleepDone: 'bed-filled',
   leave: 'leave-house-empty',
   leaveDone: 'leave-house-filled',
+  office: 'office-empty',
+  officeDone: 'office-filled',
   water: 'water-cup-empty',
   waterDone: 'water-cup-full',
   work: 'work-empty',
@@ -99,6 +108,13 @@ export const ICONS = [
   ...Object.values(CUSTOM_TASK_ICONS).map((name) => ({ name, set: 'custom', style: 'color', size: 2.25, use: 'Today' })),
   ...[DAY_BACK_ICON, DAY_ON_ICON].map((name) => ({ name, set: 'fluent', style: 'white', size: 1, use: 'Today' })),
   { name: REFRESH_ICON, set: 'fluent', style: 'white', size: 0.93, use: 'Today' },
+  ...[POWER_ICON, BRIGHTNESS_LOW_ICON, BRIGHTNESS_HIGH_ICON, ADD_ICON, DELETE_ICON].map((name) => ({
+    name,
+    set: 'fluent',
+    style: 'white',
+    size: 1,
+    use: 'Lighting',
+  })),
   ...[SETTINGS_ICON, BACK_ICON, SHOW_SKY_ICON, SHOW_ALL_ICON].map((name) => ({
     name,
     set: 'fluent',

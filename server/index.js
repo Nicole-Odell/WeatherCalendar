@@ -4,9 +4,13 @@ import { fileURLToPath } from 'node:url';
 import * as AlertsManager from './AlertsManager.js';
 import * as CalendarManager from './CalendarManager.js';
 import * as ForecastManager from './ForecastManager.js';
+import * as GoogleTasksManager from './GoogleTasksManager.js';
+import * as LightsManager from './LightsManager.js';
+import * as LightAutomation from './LightAutomation.js';
 import * as PollenManager from './PollenManager.js';
 import * as SkyColorManager from './SkyColorManager.js';
 import * as TasksManager from './TasksManager.js';
+import * as UiManager from './UiManager.js';
 import * as TimeOfDayManager from './TimeOfDayManager.js';
 import * as WeatherManager from './WeatherManager.js';
 
@@ -106,6 +110,92 @@ app.get('/api/time-of-day/sun-times', async (req, res) => {
   }
 });
 
+// The house's lights' master power, through LightLine (see LightsManager):
+// GET reads it, POST ?powered=true|false sets it
+app.get('/api/lights/power', async (req, res) => {
+  try {
+    res.json(await LightsManager.GetPower());
+  } catch (error) {
+    console.error('Failed to read the lights:', error.message);
+    res.status(502).json({ error: error.message });
+  }
+});
+
+app.post('/api/lights/power', async (req, res) => {
+  try {
+    res.json(await LightsManager.SetPower(req.query.powered === 'true'));
+  } catch (error) {
+    console.error('Failed to set the lights:', error.message);
+    res.status(502).json({ error: error.message });
+  }
+});
+
+// The lights' global brightness (0–1), through LightLine: GET reads it,
+// POST ?brightness=0.5 sets it
+app.get('/api/lights/brightness', async (req, res) => {
+  try {
+    res.json(await LightsManager.GetBrightness());
+  } catch (error) {
+    console.error('Failed to read the lights:', error.message);
+    res.status(502).json({ error: error.message });
+  }
+});
+
+app.post('/api/lights/brightness', async (req, res) => {
+  try {
+    // (set by hand: any automation's fade stops, see LightAutomation)
+    await LightAutomation.BrightnessSetByHand();
+    res.json(await LightsManager.SetBrightness(req.query.brightness));
+  } catch (error) {
+    console.error('Failed to set the lights:', error.message);
+    res.status(502).json({ error: error.message });
+  }
+});
+
+// The lighting automations (see LightAutomation): GET reads them, PUT
+// replaces them with the list sent ({ automations })
+app.get('/api/lights/automations', async (req, res) => {
+  res.json(await LightAutomation.GetAutomations());
+});
+
+app.put('/api/lights/automations', express.json(), async (req, res) => {
+  try {
+    res.json(await LightAutomation.SetAutomations(req.body && req.body.automations));
+  } catch (error) {
+    console.error('Failed to save the lighting automations:', error);
+    res.status(400).json({ error: error.message });
+  }
+});
+
+// The lighting automations run every second, one check at a time
+const AUTOMATION_INTERVAL = 1000;
+let automationRunning = false;
+setInterval(async () => {
+  if (automationRunning) return;
+  automationRunning = true;
+  try {
+    await LightAutomation.Tick();
+  } catch (error) {
+    console.error('Lighting automation failed:', error);
+  } finally {
+    automationRunning = false;
+  }
+}, AUTOMATION_INTERVAL);
+
+// Display settings kept for every screen (see UiManager): GET reads them,
+// POST ?flavor=glass|default and/or ?wakeTime=HH:MM changes them
+app.get('/api/ui', async (req, res) => {
+  res.json(await UiManager.GetSettings());
+});
+
+app.post('/api/ui', async (req, res) => {
+  try {
+    res.json(await UiManager.SetSettings({ flavor: req.query.flavor, wakeTime: req.query.wakeTime }));
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
 // A day's calendar events (see CalendarManager.GetEvents): today, or the
 // day given as ?date=YYYY-MM-DD, from feeds fetched again with ?fresh=true
 app.get('/api/calendar/today', async (req, res) => {
@@ -119,7 +209,34 @@ app.get('/api/calendar/today', async (req, res) => {
   }
 });
 
-// The daily tasks under "Today": when each was done (see TasksManager)
+// Google Tasks for a day (see GoogleTasksManager): ?date=YYYY-MM-DD (the day
+// shown) and ?today=YYYY-MM-DD (the display's today, for overdue ones), from
+// a fresh fetch with ?fresh=true
+app.get('/api/google-tasks', async (req, res) => {
+  const day = /^\d{4}-\d{2}-\d{2}$/;
+  if (!day.test(req.query.date || '') || !day.test(req.query.today || '')) {
+    res.status(400).json({ error: 'Give ?date= and ?today= as YYYY-MM-DD' });
+    return;
+  }
+  try {
+    res.json(await GoogleTasksManager.GetTasks(req.query.date, req.query.today, { fresh: req.query.fresh === 'true' }));
+  } catch (error) {
+    console.error('Failed to get Google Tasks:', error.message);
+    res.status(502).json({ error: error.message });
+  }
+});
+
+// Marks a Google Task completed: POST ?listId=...&taskId=...
+app.post('/api/google-tasks/complete', async (req, res) => {
+  try {
+    res.json(await GoogleTasksManager.CompleteTask(req.query.listId, req.query.taskId));
+  } catch (error) {
+    console.error('Failed to complete a Google Task:', error.message);
+    res.status(502).json({ error: error.message });
+  }
+});
+
+// The daily tasks under "Today", by day (see TasksManager)
 app.get('/api/tasks', async (req, res) => {
   try {
     res.json(await TasksManager.GetTasks());
@@ -129,21 +246,21 @@ app.get('/api/tasks', async (req, res) => {
   }
 });
 
-// Marks a task done now, unless it's already been done its number of times
-// since ?since= (the last sunrise)
+// Marks a step of a task done on the day ?date=YYYY-MM-DD, unless it's
+// already been done its number of times that day
 app.post('/api/tasks/:task/done', async (req, res) => {
   try {
-    res.json(await TasksManager.DoTask(req.params.task, req.query.since));
+    res.json(await TasksManager.DoTask(req.params.task, req.query.date));
   } catch (error) {
     console.error('Failed to mark a task done:', error);
     res.status(400).json({ error: error.message });
   }
 });
 
-// Clears every task, so none are done
+// Clears every task on the day ?date=YYYY-MM-DD, so none are done
 app.post('/api/tasks/reset', async (req, res) => {
   try {
-    res.json(await TasksManager.ResetTasks());
+    res.json(await TasksManager.ResetTasks(req.query.date));
   } catch (error) {
     console.error('Failed to reset tasks:', error);
     res.status(500).json({ error: error.message });
@@ -234,6 +351,14 @@ app.get('/api/sky/stream', (req, res) => {
 });
 
 // Serve the built React app
+// Fluent Emoji pictures (see scripts/importFluentEmoji.mjs), shown in place
+// of emoji in calendar and task text; they never change, so browsers keep
+// them (the Pi 3 fetches each once)
+app.use(
+  '/emoji',
+  express.static(path.join(__dirname, '..', 'emoji'), { maxAge: '365d', immutable: true, fallthrough: false }),
+);
+
 app.use(express.static(distDir));
 app.get('*splat', (req, res) => {
   res.sendFile(path.join(distDir, 'index.html'));

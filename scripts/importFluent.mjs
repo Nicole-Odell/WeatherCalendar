@@ -34,6 +34,14 @@ const WHITE_ICONS = [
   'chevron-right-24-regular',
   // The calendar's refresh button
   'arrow-clockwise-24-regular',
+  // The lighting panel's power button
+  'power-24-regular',
+  // The lighting panel's brightness sliders, and its automation rows' add
+  // and delete buttons
+  'brightness-low-24-regular',
+  'brightness-high-24-regular',
+  'add-24-regular',
+  'dismiss-24-regular',
 ];
 
 // Gives the icon its size from its viewBox (Iconify sizes it 1em, which an

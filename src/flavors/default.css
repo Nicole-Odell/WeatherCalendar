@@ -1,0 +1,59 @@
+/*
+ * The "Default" UI flavor (see the UI flavors in index.css): controls with
+ * no background, outlined by a soft shadow that's dark by day and a white
+ * glow at night; a faint, soft-edged tint behind the calendar by day only;
+ * and calendar blocks outlined in their calendar's color by day.
+ */
+:root.flavor-default {
+  --control-background: transparent;
+  --control-border: 2px solid transparent;
+  --control-radius: 10px;
+  --control-shadow: 0 0 16px rgba(0, 0, 0, 0.25);
+  --control-backdrop: none;
+  --control-active-background: rgba(255, 255, 255, 0.2);
+  --corner-button-shadow: var(--control-shadow);
+  --slider-track: transparent;
+  --slider-fill: white;
+  --slider-thumb: white;
+  --line-shadow: 0 0 2px rgba(0, 0, 0, 0.5);
+  --panel-background: rgba(15, 23, 42, 0.1);
+  /* (its parts, for the off power icon, see index.css) */
+  --panel-fill-light: rgba(15, 23, 42, 0.1);
+  --panel-fill-dark: rgba(15, 23, 42, 0.1);
+  --panel-edge-color: rgba(255, 255, 255, 0.35);
+  --panel-highlight-color: rgba(255, 255, 255, 0.5);
+  --panel-border: none;
+  --panel-shadow: 0 0 3vw 1.5vw rgba(15, 23, 42, 0.1);
+  --panel-backdrop: none;
+  --panel-outer-shadow: none;
+  --event-shadow: var(--control-shadow);
+  --event-backdrop: none;
+  --calendar-fill-top: rgba(0, 0, 0, 0.1);
+  --calendar-fill-bottom: rgba(0, 0, 0, 0.4);
+}
+
+:root.flavor-default.dark-sky {
+  --control-shadow: 0 0 8px rgba(255, 255, 255, 0.5);
+  /* (no outline on the corner buttons at night) */
+  --corner-button-shadow: none;
+  --line-shadow: 0 0 4px rgba(255, 255, 255, 0.5);
+  --panel-background: transparent;
+  --panel-shadow: none;
+  --event-shadow: 0 0 8px rgba(255, 255, 255, 0.5);
+  --calendar-fill-top: rgba(0, 0, 0, 0);
+  --calendar-fill-bottom: rgba(0, 0, 0, 0.25);
+}
+
+/* The calendar's event blocks' 1px border: their calendar's color by day
+   (--event-color, set by the page), white at night */
+:root.flavor-default .calendar-event,
+:root.flavor-default .calendar-all-day-event,
+:root.flavor-default .calendar-task.done {
+  border: 1px solid var(--event-color);
+}
+
+:root.flavor-default.dark-sky .calendar-event,
+:root.flavor-default.dark-sky .calendar-all-day-event,
+:root.flavor-default.dark-sky .calendar-task.done {
+  border-color: white;
+}
