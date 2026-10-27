@@ -22,6 +22,8 @@ const FIRST_SHAPES_MS = 1000;
 const MARGIN_STEP = 16;
 // Most canvases and arrays of each size kept for reuse
 const POOL_SIZE = 4;
+// Steps in the gradient of moonlight on the clouds (see setMoonLight)
+const MOON_LIGHT_STOPS = 8;
 // The clouds are only drawn again for motion once some band has drifted this
 // many pixels (of the clouds' image, a quarter of the screen's resolution)
 // since they were last drawn: about a screen pixel. Slow clouds then cost far
@@ -69,6 +71,10 @@ export function createCpuCloudRenderer(canvas, createCanvas, cloudSpeed) {
     // breaks for other work) and the last coloring
     shapesMs: null,
     colorsMs: null,
+    // The moonlight on the clouds (see setMoonLight), and its gradient
+    moonLight: null,
+    moonGradient: null,
+    moonCanvas: null,
   };
 
   /*
@@ -103,13 +109,13 @@ export function createCpuCloudRenderer(canvas, createCanvas, cloudSpeed) {
       frameCanvas.width = width;
       frameCanvas.height = height;
     }
-    return { canvas: frameCanvas, width, height, margin, clock, bands, shapes, pixels: null };
+    return { canvas: frameCanvas, width, height, margin, clock, bands, shapes, pixels: null, mask: null };
   }
 
   // Puts a frame that's no longer shown back in the pools
   function retire(frame) {
     if (!frame) return;
-    if (canvasPool.length < POOL_SIZE) canvasPool.push(frame.canvas);
+    for (const used of [frame.canvas, frame.mask]) if (used && canvasPool.length < POOL_SIZE) canvasPool.push(used);
     if (frame.shapes) Object.values(frame.shapes).forEach(returnArray);
     returnArray(frame.pixels);
   }
@@ -121,6 +127,25 @@ export function createCpuCloudRenderer(canvas, createCanvas, cloudSpeed) {
     colorClouds(pixels, frame.width, frame.height, state.settings, state.rows, frame.shapes);
     state.colorsMs = performance.now() - started;
     return pixels;
+  }
+
+  // A canvas the size of `frame` with its clouds' glowing edges: white, as
+  // opaque as each pixel's thinness (see colorClouds), for the moonlight
+  function edgeMask(frame) {
+    const mask = canvasPool.pop() ?? createCanvas();
+    if (mask.width !== frame.width || mask.height !== frame.height) {
+      mask.width = frame.width;
+      mask.height = frame.height;
+    }
+    const { opacity, thinness } = frame.shapes;
+    const pixels = new Uint8ClampedArray(frame.width * frame.height * 4);
+    for (let i = 0; i < opacity.length; i++) {
+      if (opacity[i] <= 0 || thinness[i] <= 0) continue;
+      pixels[i * 4] = pixels[i * 4 + 1] = pixels[i * 4 + 2] = 255;
+      pixels[i * 4 + 3] = 255 * thinness[i];
+    }
+    mask.getContext('2d').putImageData(new ImageData(pixels, frame.width, frame.height), 0, 0);
+    return mask;
   }
 
   // Shows `pixels` in `frame`, returning the frame's old pixels to the pool
@@ -136,12 +161,14 @@ export function createCpuCloudRenderer(canvas, createCanvas, cloudSpeed) {
   // the whole frame `xOffset` columns further right. A band never slides
   // further than the frame's extra columns: if new shapes are late (the CPU is
   // too busy), its clouds wait at the end rather than leaving an empty edge.
-  function drawFrame(context, frame, xOffset) {
+  // (`part` is the frame's canvas to draw: 'canvas', or 'mask' for its edges)
+  function drawFrame(context, frame, xOffset, part = 'canvas') {
+    if (!frame[part]) return;
     for (const band of frame.bands) {
       const drift = Math.min(frame.margin, (state.clock - frame.clock) * band.speed * frame.height);
       const rows = band.end - band.start;
       context.drawImage(
-        frame.canvas,
+        frame[part],
         0,
         band.start,
         frame.width,
@@ -159,19 +186,43 @@ export function createCpuCloudRenderer(canvas, createCanvas, cloudSpeed) {
    * The fade is a straight mix of the two frames' premultiplied colors: `from`
    * at (1 − progress), with `to` at `progress` added to it.
    */
-  function drawBlend(target, progress, xOffset = 0) {
+  function drawBlend(target, progress, xOffset = 0, part = 'canvas') {
     const context = target.getContext('2d');
     context.clearRect(0, 0, target.width, target.height);
     const { from, to } = state;
     if (from && progress < 1) {
       context.globalAlpha = 1 - progress;
-      drawFrame(context, from, xOffset);
+      drawFrame(context, from, xOffset, part);
       context.globalCompositeOperation = 'lighter';
       context.globalAlpha = progress;
     }
-    if (to) drawFrame(context, to, xOffset);
+    if (to) drawFrame(context, to, xOffset, part);
     context.globalCompositeOperation = 'source-over';
     context.globalAlpha = 1;
+  }
+
+  // Puts the moonlight on the clouds' glowing edges as drawn (see
+  // setMoonLight), `progress` through the fade between frames: the edges,
+  // slid and faded as the clouds are, take the moon's gradient, which then
+  // goes over the clouds
+  function lightByMoon(progress) {
+    const light = state.moonLight;
+    if (!light) return;
+    const lit = (state.moonCanvas ??= createCanvas());
+    if (lit.width !== canvas.width || lit.height !== canvas.height) {
+      lit.width = canvas.width;
+      lit.height = canvas.height;
+    }
+    drawBlend(lit, progress, 0, 'mask');
+    const litContext = lit.getContext('2d');
+    litContext.globalCompositeOperation = 'source-in';
+    litContext.fillStyle = state.moonGradient;
+    litContext.fillRect(0, 0, lit.width, lit.height);
+    litContext.globalCompositeOperation = 'source-over';
+    const context = canvas.getContext('2d');
+    context.globalCompositeOperation = 'source-atop';
+    context.drawImage(lit, 0, 0);
+    context.globalCompositeOperation = 'source-over';
   }
 
   function fadeProgress(now) {
@@ -186,7 +237,14 @@ export function createCpuCloudRenderer(canvas, createCanvas, cloudSpeed) {
       if (!bands.some((b) => b.layer === band.layer)) bands.push(band);
     }
     const frame = createFrame(to.width, to.height, to.margin, state.clock, bands, null);
-    drawBlend(frame.canvas, fadeProgress(performance.now()), to.margin);
+    const progress = fadeProgress(performance.now());
+    drawBlend(frame.canvas, progress, to.margin);
+    frame.mask = canvasPool.pop() ?? createCanvas();
+    if (frame.mask.width !== to.width || frame.mask.height !== to.height) {
+      frame.mask.width = to.width;
+      frame.mask.height = to.height;
+    }
+    drawBlend(frame.mask, progress, to.margin, 'mask');
     return frame;
   }
 
@@ -256,6 +314,7 @@ export function createCpuCloudRenderer(canvas, createCanvas, cloudSpeed) {
       state.job = null;
       state.shapesMs = performance.now() - job.started;
       frame.shapes = shapes;
+      frame.mask = edgeMask(frame);
       showPixels(frame, colorPixels(frame));
       fadeTo(frame, duration);
       onFrame();
@@ -345,11 +404,36 @@ export function createCpuCloudRenderer(canvas, createCanvas, cloudSpeed) {
       state.changed = false;
       state.drawnClock = state.clock;
       drawBlend(canvas, progress);
+      lightByMoon(progress);
       if (progress >= 1 && state.from) {
         retire(state.from);
         state.from = null;
       }
       return progress < 1;
+    },
+
+    /**
+     * Sets the moonlight on the clouds around the moon: { x, y, radius (in
+     * the clouds' pixels), strength (0–1) }, or null for none. It's fixed
+     * on screen as the clouds slide under it, so it's put on as they're
+     * drawn: `color(share of the radius)` over the clouds' glowing edges only, `strength` ×
+     * falloff(distance / radius) × the edge's thinness of the way to it.
+     */
+    setMoonLight(light, falloff, color) {
+      if (JSON.stringify(light) === JSON.stringify(state.moonLight)) return;
+      state.moonLight = light;
+      state.moonGradient = null;
+      if (light) {
+        const { x, y, radius, strength } = light;
+        const gradient = canvas.getContext('2d').createRadialGradient(x, y, 0, x, y, radius);
+        for (let i = 0; i <= MOON_LIGHT_STOPS; i++) {
+          const share = i / MOON_LIGHT_STOPS;
+          const [red, green, blue] = color(share);
+          gradient.addColorStop(share, `rgba(${red}, ${green}, ${blue}, ${Math.min(1, strength * falloff(share)).toFixed(4)})`);
+        }
+        state.moonGradient = gradient;
+      }
+      state.changed = true;
     },
 
     // Sets what to call when a new frame is ready, to start painting

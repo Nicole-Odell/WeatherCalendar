@@ -1,13 +1,20 @@
 /*
- * Rain and snow, drawn as moving particles on one canvas over the sky (see
- * skyRenderer.js). Each frame clears the canvas and draws every particle of a
- * layer in one path with one stroke or fill, so the work is a handful of
- * drawing calls however many particles there are. Particles move by real
- * time passed, so motion stays steady if a frame is late.
+ * Rain and snow, on one canvas over the sky (see skyRenderer.js).
  *
- * Layers, far to near, give depth: nearer particles are bigger, faster and
- * more opaque. Intensity (0–100) sets how many of each layer's particles show
- * and how opaque they are.
+ * Rain is frames made ahead (by scripts/makeRainTiles.py, for light,
+ * moderate and heavy rain), all in one image, which is loaded when needed
+ * and copied from: the frame for the time, stretched to the canvas's width
+ * and repeated down. Copying is cheap, unlike the hundreds of streaks it
+ * shows. It's only drawn every RAIN_INTERVAL ms on its own (more often
+ * changes the screen more often, which the Pi 3 is slow at), skipping
+ * frames to keep its speed.
+ *
+ * Snow is drawn as moving particles: each frame draws every particle of a
+ * layer in one path with one fill, so the work is a handful of drawing calls
+ * however many particles there are. Particles move by real time passed, so
+ * motion stays steady if a frame is late. Layers, far to near, give depth:
+ * nearer particles are bigger, faster and more opaque. Intensity (0–100)
+ * sets how many of each layer's particles show and how opaque they are.
  */
 
 // How often a frame is drawn (ms)
@@ -21,15 +28,20 @@ export const PRECIPITATION_SCALE = 0.5;
 const REFERENCE_WIDTH = 1080;
 const REFERENCE_HEIGHT = 1920;
 
-/*
- * Rain: streaks `length` px long and `width` px wide, falling at `speed`
- * px/s and leaning `slant` px across per px down
- */
-const RAIN_LAYERS = [
-  { count: 220, length: 22, width: 1, speed: 900, slant: 0.08, opacity: 0.35 },
-  { count: 120, length: 36, width: 1.5, speed: 1300, slant: 0.08, opacity: 0.45 },
-  { count: 50, length: 56, width: 2, speed: 1800, slant: 0.08, opacity: 0.55 },
+// The rain frames for each intensity (0–100), each used up to `upTo`; how
+// many frames each holds, one above the other, and how far apart they are
+// in time (ms), as makeRainTiles.py makes them
+const RAIN_SHEETS = [
+  { upTo: 45, url: '/rain/rain-light.webp' },
+  { upTo: 80, url: '/rain/rain-moderate.webp' },
+  { upTo: 100, url: '/rain/rain-heavy.webp' },
 ];
+const RAIN_FRAMES = 20;
+const RAIN_FRAME_MS = 100;
+// How often rain on its own is drawn again (ms); with snow, it's drawn with
+// each of the snow's frames
+const RAIN_INTERVAL = 333;
+
 /*
  * Snow: flakes `size` px across, falling at `speed` px/s and swaying side to
  * side by up to `sway` px, once every `swayPeriod` s
@@ -58,14 +70,19 @@ function createParticles(count, width, height) {
 
 /**
  * Returns a drawer for `canvas`: setScene({ rain, snow }, width, height) sets
- * the intensities (0–100) and the canvas's size, and frame(seconds) moves the
- * particles on by that much time and draws them. `active()` says whether
+ * the intensities (0–100) and the canvas's size, and frame(seconds) moves
+ * things on by that much time and draws them. `active()` says whether
  * there's anything to draw.
  */
 export function createPrecipitation(canvas) {
   const context = canvas.getContext('2d');
   let rain = 0;
   let snow = 0;
+  // The rain frames shown (see RAIN_SHEETS): their address, and the image
+  // once loaded; and when the rain was last drawn (ms)
+  let rainUrl = null;
+  let rainSheet = null;
+  let rainDrawn = -Infinity;
   let layers = [];
   let width = 0;
   let height = 0;
@@ -78,29 +95,40 @@ export function createPrecipitation(canvas) {
   // changing intensity only changes how many are drawn
   function makeLayers() {
     const area = (width * height) / (REFERENCE_WIDTH * scale * REFERENCE_HEIGHT * scale);
-    layers = [
-      ...RAIN_LAYERS.map((layer) => ({ ...layer, kind: 'rain' })),
-      ...SNOW_LAYERS.map((layer) => ({ ...layer, kind: 'snow' })),
-    ].map((layer) => {
+    layers = SNOW_LAYERS.map((layer) => {
       const count = Math.max(1, Math.round(layer.count * area));
       return { ...layer, count, particles: createParticles(count, width, height) };
     });
   }
 
-  function drawRain(layer, shown, share) {
-    const { particles, slant } = layer;
-    const length = layer.length * scale;
-    context.strokeStyle = `rgba(220, 230, 245, ${layer.opacity * (0.4 + 0.6 * share)})`;
-    context.lineWidth = layer.width * scale;
-    context.beginPath();
-    for (let i = 0; i < shown; i++) {
-      const x = particles[i * 4];
-      const y = particles[i * 4 + 1];
-      const streak = length * particles[i * 4 + 2];
-      context.moveTo(x, y);
-      context.lineTo(x - slant * streak, y + streak);
+  // Shows the rain frames at `url` (null for none), loading them
+  function useRainSheet(url) {
+    if (url === rainUrl) return;
+    rainUrl = url;
+    if (rainSheet) rainSheet.close();
+    rainSheet = null;
+    if (!url) return;
+    fetch(url)
+      .then((response) => response.blob())
+      .then((blob) => createImageBitmap(blob))
+      .then((sheet) => {
+        // (unless other frames were wanted meanwhile)
+        if (rainUrl === url) rainSheet = sheet;
+        else sheet.close();
+      })
+      .catch((error) => console.error('The rain could not be loaded:', error));
+  }
+
+  // Draws the rain frame for `now` (ms), stretched across and repeated down
+  function drawRain(now) {
+    const tileWidth = rainSheet.width;
+    const tileHeight = rainSheet.height / RAIN_FRAMES;
+    const top = (Math.floor(now / RAIN_FRAME_MS) % RAIN_FRAMES) * tileHeight;
+    const drawnHeight = (width * tileHeight) / tileWidth;
+    for (let y = 0; y < height; y += drawnHeight) {
+      context.drawImage(rainSheet, 0, top, tileWidth, tileHeight, 0, y, width, drawnHeight);
     }
-    context.stroke();
+    rainDrawn = now;
   }
 
   function drawSnow(layer, shown, share) {
@@ -123,6 +151,7 @@ export function createPrecipitation(canvas) {
     setScene(intensities, newWidth, newHeight) {
       rain = Math.max(0, Math.min(100, intensities.rain || 0));
       snow = Math.max(0, Math.min(100, intensities.snow || 0));
+      useRainSheet(rain > 0 ? (RAIN_SHEETS.find((sheet) => rain <= sheet.upTo) || RAIN_SHEETS[2]).url : null);
       if (newWidth !== width || newHeight !== height) {
         width = newWidth;
         height = newHeight;
@@ -146,28 +175,26 @@ export function createPrecipitation(canvas) {
         drawnEmpty = true;
         return;
       }
+      // Rain on its own is only drawn every RAIN_INTERVAL (and once loaded)
+      const now = performance.now();
+      if (snow === 0 && (!rainSheet || now - rainDrawn < RAIN_INTERVAL)) return;
       context.clearRect(0, 0, width, height);
       drawnEmpty = false;
-      context.lineCap = 'round';
+      if (rainSheet) drawRain(now);
+      if (snow === 0) return;
       for (const layer of layers) {
-        const share = (layer.kind === 'rain' ? rain : snow) / 100;
+        const share = snow / 100;
         const shown = Math.round(layer.count * share);
         if (shown === 0) continue;
-        // Moves the shown particles down, wrapping from the bottom to the top
-        // (and across, for the rain's lean), then draws them
+        // Moves the shown particles down, wrapping from the bottom to the
+        // top, then draws them
         const { particles, speed } = layer;
-        const lean = layer.kind === 'rain' ? layer.slant : 0;
         for (let i = 0; i < shown; i++) {
-          const fall = speed * scale * particles[i * 4 + 2] * seconds;
-          let y = particles[i * 4 + 1] + fall;
-          let x = particles[i * 4] - lean * fall;
+          let y = particles[i * 4 + 1] + speed * scale * particles[i * 4 + 2] * seconds;
           if (y > height) y -= height + 60 * scale;
-          if (x < -60 * scale) x += width + 120 * scale;
-          particles[i * 4] = x;
           particles[i * 4 + 1] = y;
         }
-        if (layer.kind === 'rain') drawRain(layer, shown, share);
-        else drawSnow(layer, shown, share);
+        drawSnow(layer, shown, share);
       }
     },
   };

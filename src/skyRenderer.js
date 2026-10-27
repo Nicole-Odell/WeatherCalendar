@@ -7,7 +7,11 @@ import {
   computeRows,
   drawStars,
   renderHazeColumn,
+  moonCloudColor,
+  moonCloudFalloff,
+  moonCloudLight,
   moonGlowMargin,
+  overcastOf,
   renderMoon,
   renderSkyColumn,
   renderStarGlow,
@@ -30,6 +34,8 @@ const DEFAULT_MOON_ALTITUDE = 45;
 // The moon's altitude (degrees) shown at the top of the screen, with the
 // horizon at the bottom (here, at 47.65° N, it never gets above about 70°)
 const MOON_TOP_ALTITUDE = 80;
+// Moonlight on the clouds weaker than this (see moonCloudLight) isn't drawn
+const MOON_CLOUD_LIGHT_LEAST = 0.01;
 // As the moon rises and sets, it's only drawn again once it has moved this
 // many pixels (or the sky or its settings change); until then the drawing
 // just moves with it
@@ -77,7 +83,7 @@ const CPU_RECOLOR_STEP = 1;
  * 4. `clouds`: the cloud layers, drawn with WebGL if the GPU is fast enough,
  *    otherwise on the CPU (see cpuClouds.js)
  * 5. `haze`: the haze, a column 1 pixel wide that the page stretches
- * 6. `precipitation`: rain and snow, moving particles drawn every
+ * 6. `precipitation`: rain and snow, drawn every
  *    PRECIPITATION_INTERVAL ms while there's any (see precipitation.js)
  * `createCanvas()` makes an off-screen canvas for working in.
  * `report(message)` passes back { status } (renderer and timings) and
@@ -128,6 +134,8 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
       key: null,
       sky: null,
       changed: false,
+      // How much brighter than the sky its disc shows (0–1, see renderMoon)
+      shown: 0,
     },
     // How the clouds are drawn, once chosen: 'webgl' or 'cpu', with the
     // renderer (from cloudsGL.js or cpuClouds.js) and how long the GPU took
@@ -453,7 +461,7 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
       settings.moon.brightLimb,
       settings.exposure,
       // (the haze changes how it's drawn, see hazyMoon)
-      Math.round(settings.clouds.total),
+      Math.round(overcastOf(settings.clouds)),
     ]);
     if (key === moon.key && sameValues(sky, moon.sky, INSTANT_CHANGE)) {
       // Nothing to draw again, though it may have moved a little
@@ -463,11 +471,32 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
     }
     // The pixels are drawn into the same image each time while its size holds
     if (moon.pixels?.width !== size) moon.pixels = new ImageData(size, size);
-    renderMoon(moon.pixels.data, size, moon.image.data, diameter, top, fullHeight, settings);
+    moon.shown = renderMoon(moon.pixels.data, size, moon.image.data, diameter, top, fullHeight, settings);
     resize(moon.canvas, size, size);
     moon.canvas.getContext('2d').putImageData(moon.pixels, 0, 0);
     Object.assign(moon, { left, top, drawnTop: top, key, sky, changed: true });
     return true;
+  }
+
+  /**
+   * The moonlight on the clouds around the moon (see moonCloudLight), in the
+   * clouds' pixels: { x, y (the moon's center, from the top left), radius
+   * (how far it reaches), strength (0–1) }, or null with none to see
+   */
+  function moonLightOnClouds(settings) {
+    const { moon } = state;
+    if (moon.key === null || !(moon.shown > 0)) return null;
+    const { fullHeight, cloudHeight } = sizes();
+    const { reach, strength } = moonCloudLight(settings, moon.shown);
+    if (strength < MOON_CLOUD_LIGHT_LEAST) return null;
+    const scale = cloudHeight / fullHeight;
+    const center = moon.canvas.width / 2;
+    return {
+      x: Math.round((moon.left + center) * scale),
+      y: Math.round((moon.top + center) * scale),
+      radius: Math.max(1, Math.round(reach * MOON_RADIUS * fullHeight * scale)),
+      strength: Math.round(strength * 100) / 100,
+    };
   }
 
   // Loads the moon picture's pixels, then draws the scene again with it
@@ -515,7 +544,12 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
     const moonRedrawn = drawMoon(settings, skyColumn);
     const moonDone = performance.now();
 
-    const cloudsRedrawn = drawClouds(settings, cloudShaderData(settings, cloudHeight, rows), rows, fadeDuration);
+    const moonLight = moonLightOnClouds(settings);
+    const cloudData = cloudShaderData(settings, cloudHeight, rows);
+    // (on the CPU, it's put on as the clouds are drawn, so needn't recolor them)
+    if (state.cloudMode !== 'cpu') cloudData.uniforms.moonLight = moonLight;
+    const cloudsRedrawn = drawClouds(settings, cloudData, rows, fadeDuration);
+    if (state.cloudMode === 'cpu') state.cloudRenderer.setMoonLight(moonLight, moonCloudFalloff, moonCloudColor);
     updateAnimation();
     updatePrecipitation();
     startPainting();

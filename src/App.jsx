@@ -2,12 +2,14 @@ import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState }
 import SkyCanvas from './SkyCanvas.jsx';
 import { createStore, useStore } from './store.js';
 import {
+  CLOUD_DARKNESS_TYPICAL,
   DEFAULT_CLOUD_BRIGHTNESS,
   DEFAULT_CLOUD_GLOW,
   DEFAULT_CLOUD_LIGHTING,
   DEFAULT_HAZE_CONTRAST,
   DEFAULT_MOON,
   DEFAULT_STARS,
+  overcastOf,
   skyBrightnessAt,
   skyColorAt,
   topSkyBrightness,
@@ -83,10 +85,42 @@ const PRECIPITATION_SLIDERS = [
 ];
 const NO_PRECIPITATION = { rain: 0, snow: 0 };
 
-// The precipitation shown for the current weather. Not hooked up to the
-// weather yet, so there's none until it's set in Settings.
-function precipitationFromWeather() {
-  return NO_PRECIPITATION;
+// Weather codes (WMO) that mean rain (drizzle, rain, freezing rain, showers,
+// thunderstorms) or snow (snow, snow grains, snow showers)
+const RAIN_CODES = [51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82, 95, 96, 99];
+const SNOW_CODES = [71, 73, 75, 77, 85, 86];
+// Precipitation's intensity (0–100) runs from PRECIPITATION_LEAST, for any
+// at all (or a code saying there's some), to 100 at these rates: heavy rain
+// (mm an hour) and heavy snow (cm an hour). Rain's only reaches
+// RAIN_STEADY_MOST from how much falls (rain and showers together); the rest
+// comes from showers (bursts of heavier rain), by their rate up to heavy.
+const PRECIPITATION_LEAST = 20;
+const HEAVY_RAIN = 7.6;
+const HEAVY_SNOW = 4;
+const RAIN_STEADY_MOST = 85;
+
+// The precipitation shown for the current weather (Open-Meteo's current
+// conditions, whose amounts are over its `interval`), as { rain, snow }
+// intensities, each only if `show` has it on
+function precipitationFromWeather(current, show) {
+  if (!current) return NO_PRECIPITATION;
+  const perHour = 3600 / (current.interval || 900);
+  // From PRECIPITATION_LEAST to `most` as `rate` goes up to `heavy`
+  const intensity = (rate, heavy, coded, most = 100) =>
+    rate > 0
+      ? Math.min(most, PRECIPITATION_LEAST + ((most - PRECIPITATION_LEAST) * rate) / heavy)
+      : coded
+        ? PRECIPITATION_LEAST
+        : 0;
+  const code = current.weather_code;
+  const showers = (current.showers || 0) * perHour;
+  const rain =
+    intensity((current.rain || 0) * perHour + showers, HEAVY_RAIN, RAIN_CODES.includes(code), RAIN_STEADY_MOST) +
+    (100 - RAIN_STEADY_MOST) * Math.min(1, showers / HEAVY_RAIN);
+  return {
+    rain: show.rain ? Math.round(rain) : 0,
+    snow: show.snow ? Math.round(intensity((current.snowfall || 0) * perHour, HEAVY_SNOW, SNOW_CODES.includes(code))) : 0,
+  };
 }
 
 const CLOUD_SLIDERS = [
@@ -94,6 +128,8 @@ const CLOUD_SLIDERS = [
   { name: 'high', label: 'High (8+ km)' },
   { name: 'mid', label: 'Mid (3–8 km)' },
   { name: 'low', label: 'Low (0–3 km)' },
+  // (how dark the clouds are, see cloud_darkness in server/WeatherManager.js)
+  { name: 'darkness', label: 'Darkness' },
 ];
 
 // Names shown for sun times that differ from their field names
@@ -148,7 +184,7 @@ const STAR_FIELDS = {
   fullWhiteLevel: 'Full white once dark at (brightness, 1 is the brightest star; brighter ones are white too)',
   largeLevel: 'Twice as large at (brightness, 1 is only the brightest star)',
 };
-const NO_CLOUDS = { total: 0, low: 0, mid: 0, high: 0 };
+const NO_CLOUDS = { total: 0, low: 0, mid: 0, high: 0, darkness: CLOUD_DARKNESS_TYPICAL };
 
 function cloudsFromWeather(current) {
   return {
@@ -156,6 +192,7 @@ function cloudsFromWeather(current) {
     low: current.cloud_cover_low ?? 0,
     mid: current.cloud_cover_mid ?? 0,
     high: current.cloud_cover_high ?? 0,
+    darkness: current.cloud_darkness != null ? Math.round(current.cloud_darkness * 100) : CLOUD_DARKNESS_TYPICAL,
   };
 }
 
@@ -286,20 +323,40 @@ const SKY_LIGHT_FULL = 0.75;
 const LIGHTING_PANEL_HEIGHT = 0.88;
 const SKY_COLOR_STEP = 4;
 const SKY_LIGHT_STEP = 0.02;
+// How overcast it is by day (--sky-overcast on the page, 0 up), which tints
+// the Glass panels dark, so they're a little dimmer than an overcast sky
+// rather than brighter: the cloud cover from SKY_OVERCAST_START (0) to 100%
+// (1), times the sky's light (see --sky-light), so not at night, and by how
+// dark the clouds are: SKY_OVERCAST_SHADE.typical times at the typical
+// darkness (see CLOUD_DARKNESS_TYPICAL), moving to .brightest at 0 and
+// .darkest at 100
+const SKY_OVERCAST_START = 50;
+const SKY_OVERCAST_SHADE = { brightest: 0.75, typical: 1, darkest: 1.2 };
 
-const DarkSkyMarker = memo(function DarkSkyMarker({ exposure }) {
+const DarkSkyMarker = memo(function DarkSkyMarker({ exposure, cloudCover = 0, cloudDarkness = CLOUD_DARKNESS_TYPICAL }) {
   const sky = useStore(skyStore);
   const scene = sky && { colors: sky.colors, exposure, sunElevation: sky.sun.elevation };
   const dark = scene ? topSkyBrightness(scene) < DARK_SKY_BRIGHTNESS : false;
-  const light = scene
-    ? Math.round(Math.min(1, skyBrightnessAt(scene, 0.5) / SKY_LIGHT_FULL) / SKY_LIGHT_STEP) * SKY_LIGHT_STEP
-    : 1;
+  const exactLight = scene ? Math.min(1, skyBrightnessAt(scene, 0.5) / SKY_LIGHT_FULL) : 1;
+  const light = Math.round(exactLight / SKY_LIGHT_STEP) * SKY_LIGHT_STEP;
+  const cover = Math.min(1, Math.max(0, (cloudCover - SKY_OVERCAST_START) / (100 - SKY_OVERCAST_START)));
+  const shade =
+    cloudDarkness < CLOUD_DARKNESS_TYPICAL
+      ? SKY_OVERCAST_SHADE.brightest +
+        ((SKY_OVERCAST_SHADE.typical - SKY_OVERCAST_SHADE.brightest) * cloudDarkness) / CLOUD_DARKNESS_TYPICAL
+      : SKY_OVERCAST_SHADE.typical +
+        ((SKY_OVERCAST_SHADE.darkest - SKY_OVERCAST_SHADE.typical) * (cloudDarkness - CLOUD_DARKNESS_TYPICAL)) /
+          (100 - CLOUD_DARKNESS_TYPICAL);
+  const overcast = Math.round((cover * exactLight * shade) / SKY_LIGHT_STEP) * SKY_LIGHT_STEP;
   useEffect(() => {
     document.documentElement.classList.toggle('dark-sky', dark);
   }, [dark]);
   useEffect(() => {
     document.documentElement.style.setProperty('--sky-light', light.toFixed(2));
   }, [light]);
+  useEffect(() => {
+    document.documentElement.style.setProperty('--sky-overcast', overcast.toFixed(2));
+  }, [overcast]);
   // The sky's color where the lighting panel sits, near the top of the
   // screen (--sky-top-color), which it's filled with so it looks as if over
   // open sky (see .lighting-panel); only changed when it does by more than
@@ -2294,6 +2351,9 @@ export default function App() {
   // The wake-up time (HH:MM) for the sleep estimate, kept on the server
   // (see server/UiManager.js)
   const [wakeTime, setWakeTime] = useState('07:00');
+  // Whether rain and snow are shown from the weather (saved on the server)
+  const [showRain, setShowRain] = useState(true);
+  const [showSnow, setShowSnow] = useState(true);
   // The UI flavor, kept on the server (see server/UiManager.js)
   const [flavor, setFlavor] = useState(DEFAULT_FLAVOR);
   // The calendar's events (see server/CalendarManager.js) for the day shown:
@@ -2407,7 +2467,10 @@ export default function App() {
 
   const weatherClouds = useMemo(() => (weather ? cloudsFromWeather(weather.current) : NO_CLOUDS), [weather]);
   const clouds = cloudOverride ?? weatherClouds;
-  const weatherPrecipitation = useMemo(() => precipitationFromWeather(weather && weather.current), [weather]);
+  const weatherPrecipitation = useMemo(
+    () => precipitationFromWeather(weather && weather.current, { rain: showRain, snow: showSnow }),
+    [weather, showRain, showSnow],
+  );
   const precipitation = precipitationOverride || weatherPrecipitation;
 
   // The sliders follow the weather until they're applied
@@ -2709,6 +2772,8 @@ export default function App() {
       const settings = await fetchJson('/api/ui');
       setFlavor(settings.flavor);
       setWakeTime(settings.wakeTime);
+      setShowRain(settings.showRain);
+      setShowSnow(settings.showSnow);
     } catch (err) {
       console.warn('UI settings unavailable:', err.message);
     }
@@ -2722,6 +2787,18 @@ export default function App() {
       setWakeTime((await fetchJson(`/api/ui?wakeTime=${time}`, { method: 'POST' })).wakeTime);
     } catch (err) {
       console.warn('Could not save the wake-up time:', err.message);
+    }
+  }
+
+  // Turns showing rain or snow from the weather (`name`: showRain or
+  // showSnow) on or off, here straight away and on the server
+  async function changeShown(name, shown) {
+    const set = name === 'showRain' ? setShowRain : setShowSnow;
+    set(shown);
+    try {
+      set((await fetchJson(`/api/ui?${name}=${shown}`, { method: 'POST' }))[name]);
+    } catch (err) {
+      console.warn(`Could not save ${name}:`, err.message);
     }
   }
 
@@ -2888,7 +2965,11 @@ export default function App() {
 
   return (
     <>
-      <DarkSkyMarker exposure={exposure} />
+      <DarkSkyMarker
+        exposure={exposure}
+        cloudCover={overcastOf(clouds)}
+        cloudDarkness={clouds?.darkness ?? CLOUD_DARKNESS_TYPICAL}
+      />
       <LiveSkyCanvas
         cloudLighting={cloudLighting}
         cloudGlow={cloudGlow}
@@ -3125,6 +3206,24 @@ export default function App() {
         </div>
         <div className="cloud-cover">
           <h3>Precipitation</h3>
+          <p className="precipitation-toggles">
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={showRain}
+                onChange={(event) => changeShown('showRain', event.target.checked)}
+              />
+              Show rain based on weather
+            </label>
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={showSnow}
+                onChange={(event) => changeShown('showSnow', event.target.checked)}
+              />
+              Show snow based on weather
+            </label>
+          </p>
           <div className="cloud-cover-sliders">
             {PRECIPITATION_SLIDERS.map(({ name, label }) => (
               <label key={name} className="cloud-cover-row">

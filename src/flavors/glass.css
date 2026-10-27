@@ -12,7 +12,9 @@
  * brightness), so they fade smoothly with it rather than switching at
  * night. At full light the glass is tinted slightly dark, so white text
  * still reads over the bright sky; with none, it's clear, with faint edges.
- * Each value goes from its night value (at 0) to its day value (at 1). The
+ * Each value goes from its night value (at 0) to its day value (at 1).
+ * Overcast by day (--sky-overcast, 0–1), the panels' fill is tinted dark
+ * all over, so they're a little dimmer than the gray sky. The
  * panel's shadow is fixed, on its own layer, so it isn't repainted as the
  * light changes (it fades from sight on its own as the sky darkens).
  */
@@ -51,12 +53,19 @@
   /* The panel's parts (its gradient's two ends, its edge, and the highlight
      along its top), which the panel and the off power icon (a hollow, see
      index.css) are made from */
-  --panel-fill-light: rgba(255, 255, 255, calc(0.1 + 0.15 * var(--sky-light)));
+  /* (overcast, --sky-overcast, both ends turn from the white sheen to the
+     dark tint, so the panel is a little dimmer than the gray sky) */
+  --panel-fill-light: rgba(
+    calc(255 - 225 * var(--sky-overcast)),
+    calc(255 - 214 * var(--sky-overcast)),
+    calc(255 - 196 * var(--sky-overcast)),
+    calc(0.1 + 0.15 * var(--sky-light) - 0.15 * var(--sky-overcast))
+  );
   --panel-fill-dark: rgba(
     calc(255 - 225 * var(--sky-light)),
     calc(255 - 214 * var(--sky-light)),
     calc(255 - 196 * var(--sky-light)),
-    calc(0.03 + 0.09 * var(--sky-light))
+    calc(0.03 + 0.09 * var(--sky-light) + 0.06 * var(--sky-overcast))
   );
   --panel-edge-color: rgba(255, 255, 255, calc(0.18 + 0.32 * var(--sky-light)));
   --panel-highlight-color: rgba(255, 255, 255, calc(0.15 + 0.45 * var(--sky-light)));

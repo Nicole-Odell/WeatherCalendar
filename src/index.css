@@ -55,6 +55,7 @@ html {
    App.jsx), which flavors can work their colors out from (as Glass does) */
 :root {
   --sky-light: 1;
+  --sky-overcast: 0;
 }
 
 /*
@@ -1785,7 +1786,7 @@ img.emoji {
   justify-content: flex-end;
   /* (out to the same edge as the time row, so the forecast's right edge is
      the next sun event's) */
-  margin: 1vw calc(var(--edge-row-inset) - var(--page-padding-x)) 0;
+  margin: 3vw calc(var(--edge-row-inset) - var(--page-padding-x)) 0;
   font-size: 4vw;
 }
 
@@ -1882,7 +1883,7 @@ img.emoji {
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-top: 0vw;
+  margin-top: -3vw;
   margin-bottom: 2vw;
   /* The temperature's size, which the weather icon is sized and spaced by */
   font-size: 12vw;
@@ -2215,4 +2216,9 @@ img.emoji {
 
 .google-tasks + .calendar-none {
   margin-top: 1.96vw;
+}
+
+/* The precipitation section's toggles, one to a row, above its sliders */
+.precipitation-toggles .checkbox-label {
+  display: flex;
 }

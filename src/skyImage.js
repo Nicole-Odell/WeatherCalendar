@@ -55,11 +55,11 @@ const EDGE_ZONE = 0.3;
 const EDGE_FREQUENCY = 5; // lumps per screen height
 const EDGE_SOFTNESS = 0.15;
 
-// A white haze over the whole sky: none up to 50% total cover, rising to 95%
-// opacity at 100%
+// A white haze over the whole sky: none up to 50% overcast (see overcastOf),
+// rising to 95% opacity at 100%
 const HAZE_START = 50;
 const HAZE_MAX_OPACITY = 0.95;
-// Above CLOUD_FADE_START total cover, cloud layers fade into the haze, from
+// Above CLOUD_FADE_START overcast, cloud layers fade into the haze, from
 // fully opaque there to CLOUD_FADE_END_OPACITY at 100%
 const CLOUD_FADE_START = 75;
 const CLOUD_FADE_END_OPACITY = 0.05;
@@ -72,8 +72,55 @@ const CLOUD_FADE_END_OPACITY = 0.05;
 export const DEFAULT_HAZE_CONTRAST = { min: 0.1, max: 2 };
 
 // Thick haze is darker, as overcast days are: its on-screen brightness is cut
-// by up to this share at 100% total cover, rising from none at HAZE_START
-const HAZE_MAX_DIMMING = 0.3;
+// by up to a share at 100% overcast, rising from none at HAZE_START. The
+// share follows how dark the clouds are (clouds.darkness, 0–100, see
+// cloud_darkness in server/WeatherManager.js): HAZE_DIMMING.brightest at 0,
+// .darkest at 100, and .typical at CLOUD_DARKNESS_TYPICAL. Typical is how
+// overcast was always drawn before the darkness was known (and still is
+// without one), which suits a fairly dark overcast: an everyday gray one
+// is a bit brighter.
+export const CLOUD_DARKNESS_TYPICAL = 75;
+
+// How much the cloud layers count toward the overcast: low cloud fully,
+// mid nearly, and high cloud (thin cirrus, which veils the sky rather than
+// graying it) only a little
+const OVERCAST_WEIGHT = { low: 1, mid: 0.8, high: 0.3 };
+
+/**
+ * How overcast the sky is (0–100), which sets the haze and everything that
+ * follows it: from the cloud layers (clouds.low, .mid, .high, in percent),
+ * each weighted by OVERCAST_WEIGHT, overlapping at random, so open sky
+ * shows where none of them covers it; or the total cover (clouds.total), if
+ * that's less. (The weather model works out the total on its own, and it
+ * runs high: it can put it at 100% with gaps in every layer.)
+ */
+export function overcastOf(clouds) {
+  if (!clouds) return 0;
+  let open = 1;
+  for (const [name, weight] of Object.entries(OVERCAST_WEIGHT)) {
+    open *= 1 - weight * clamp((clouds[name] || 0) / 100, 0, 1);
+  }
+  const layered = 100 * (1 - open);
+  return clouds.total != null ? Math.min(layered, clouds.total) : layered;
+}
+const HAZE_DIMMING = { brightest: 0.0, typical: 0.3, darkest: 0.34 };
+// The clouds' own brightness is multiplied by up to these as their darkness
+// goes the same way
+const CLOUD_SHADE = { brightest: 1.08, darkest: 0.95 };
+// Thin, bright overcast hides the sky behind it less: the haze is up to
+// HAZE_THINNING.most less opaque, from none at darkness HAZE_THINNING.from
+// to all of it at .to and below
+const HAZE_THINNING = { most: 0.3, from: 75, to: 20 };
+
+// A value for the clouds' darkness (as above): `range`'s .typical at
+// CLOUD_DARKNESS_TYPICAL, moving straight to .brightest at 0 and .darkest at 100
+function byCloudDarkness(clouds, range) {
+  const darkness = clamp(clouds?.darkness ?? CLOUD_DARKNESS_TYPICAL, 0, 100);
+  const typical = range.typical ?? 1;
+  return darkness < CLOUD_DARKNESS_TYPICAL
+    ? range.brightest + ((typical - range.brightest) * darkness) / CLOUD_DARKNESS_TYPICAL
+    : typical + ((range.darkest - typical) * (darkness - CLOUD_DARKNESS_TYPICAL)) / (100 - CLOUD_DARKNESS_TYPICAL);
+}
 
 // Clouds are brighter than the sky in daylight and darker at dusk. They're
 // shown as neutral gray at the sky's on-screen luminance times
@@ -203,7 +250,8 @@ const EDGE_GLOW_ZONES_PER_UNIT = 4;
  * - colors: the sky colors from the server, lowest elevation first
  * - sunElevation: in degrees
  * - exposure: { floor, ceiling }
- * - clouds: { total, low, mid, high } cover in percent
+ * - clouds: { total, low, mid, high } cover in percent (the haze follows the
+ *   layers, see overcastOf), and darkness (0–100)
  * - cloudBrightness: { pivot, exponent } (see DEFAULT_CLOUD_BRIGHTNESS)
  * - hazeContrast: { min, max } (see DEFAULT_HAZE_CONTRAST)
  * - cloudLighting: { mode, reflectance, skylight } (see DEFAULT_CLOUD_LIGHTING)
@@ -634,13 +682,13 @@ const HAZE_GLOW_BOOST = 2.5;
 const HAZE_SOFTNESS = 3;
 const HAZE_CONTRAST = 0.4;
 
-// How thick the haze is, 0 (none) to 1 (100% total cover)
-const hazeThicknessOf = (clouds) => clamp(((clouds ? clouds.total : 0) - HAZE_START) / (100 - HAZE_START), 0, 1);
+// How thick the haze is, 0 (none) to 1 (100% overcast, see overcastOf)
+const hazeThicknessOf = (clouds) => clamp((overcastOf(clouds) - HAZE_START) / (100 - HAZE_START), 0, 1);
 
-// The haze the moon's glow is spread for: as for 53% total cover even with
+// The haze the moon's glow is spread for: as for 53% overcast even with
 // less (the look it's tuned to on a clear night), rising from there with
 // the haze to its full effect at 100%
-const MOON_HAZE_LEAST = hazeThicknessOf({ total: 53 });
+const MOON_HAZE_LEAST = hazeThicknessOf({ low: 53 });
 
 // The moon's settings (see DEFAULT_MOON), changed for the haze (see above)
 function hazyMoon(settings) {
@@ -659,10 +707,57 @@ function hazyMoon(settings) {
 // to 1 (gone, the whole disc as bright as its brightest part), by raising
 // their black level toward white: none up to HAZE_START, then rising
 // exponentially (faster the thicker the haze, by HAZE_WASHOUT_CURVE) to all
-// at 100% cover. The brightest parts stay as bright either way.
+// at 100% overcast. The brightest parts stay as bright either way.
 const HAZE_WASHOUT_CURVE = 3;
 const markingWashout = (clouds) =>
   Math.expm1(HAZE_WASHOUT_CURVE * hazeThicknessOf(clouds)) / Math.expm1(HAZE_WASHOUT_CURVE);
+
+/*
+ * Moonlight on the clouds around the moon, as in a photo of the moon through
+ * broken cloud: the clouds near it are lit white, most at the moon and
+ * fading out (by moonCloudFalloff) to `reach` moon radii from its center,
+ * which grows with the haze from MOON_CLOUD_REACH.least (at HAZE_START or
+ * less) to .most (at 100% overcast), as its strength does (see
+ * MOON_CLOUD_HAZE_BOOST). At the moon, a cloud is taken
+ * MOON_CLOUD_LIGHT of the way to white, times how bright the moon shows on
+ * screen (so hardly at all by day) and how much of it is lit.
+ */
+const MOON_CLOUD_LIGHT = 0.7;
+const MOON_CLOUD_REACH = { least: 10, most: 16 };
+// How many times as strong it is at 100% overcast as at HAZE_START or less,
+// rising with the haze, as the haze over it dims it
+const MOON_CLOUD_HAZE_BOOST = 2;
+
+/**
+ * The moonlight on the clouds (see above) for the moon as drawn, `moonShown`
+ * being what renderMoon returns: { reach (moon radii), strength (0 up) }
+ */
+export function moonCloudLight(settings, moonShown) {
+  const phase = settings.moon?.phase ?? 0.5;
+  const litShare = (1 - Math.cos(2 * Math.PI * phase)) / 2;
+  const haze = hazeThicknessOf(settings.clouds);
+  return {
+    reach: MOON_CLOUD_REACH.least + (MOON_CLOUD_REACH.most - MOON_CLOUD_REACH.least) * haze,
+    // (stronger with the haze, which is drawn over it and dims it)
+    // (it can pass 1; it's capped at 1 where it's put on, after its falloff)
+    strength: MOON_CLOUD_LIGHT * moonShown * litShare * (1 + (MOON_CLOUD_HAZE_BOOST - 1) * haze),
+  };
+}
+
+/** How strong the moonlight on the clouds is at `share` of its reach from the moon (1 at it, 0 beyond) */
+export const moonCloudFalloff = (share) => (1 - clamp(share, 0, 1)) ** 2;
+
+// The moonlight on the clouds is white at the moon, turning to this pale
+// orange-yellow (on screen, 0–255) by MOON_CLOUD_TINT_AT of its reach, as
+// it fades out
+export const MOON_CLOUD_TINT = [255, 214, 150];
+export const MOON_CLOUD_TINT_AT = 0.6;
+
+/** The moonlight's color on screen (0–255) at `share` of its reach from the moon */
+export function moonCloudColor(share) {
+  const tinted = clamp(share / MOON_CLOUD_TINT_AT, 0, 1);
+  return MOON_CLOUD_TINT.map((value) => Math.round(255 + (value - 255) * tinted));
+}
 
 // The glow: the most it's scaled down to work out (1/this of the moon's
 // resolution), and how many cells across its reach it keeps when it is
@@ -816,11 +911,15 @@ function moonSurfaceBrightness(phase) {
  * black. The glow is the moon's lit part blurred outward (see renderMoon), so it
  * follows the phase, softening the line between lit and dark, and hides stars
  * only as much as it outshines them.
+ * Returns how much brighter than the sky the brightest of the disc shows on
+ * screen (0–1), for the moonlight on the clouds (see moonCloudLight).
  */
 export function renderMoon(pixels, size, picture, diameter, top, screenHeight, settings) {
   const { toScreenUndimmed: toScreen, skyAt } = prepareScene(settings);
   const { luminance, contrast, glow, glowWidth, terminatorSoftness, phase: givenPhase, rotation, brightLimb } =
     hazyMoon(settings);
+  // How much brighter than the sky the brightest of the disc shows (0–255)
+  let brightestShown = 0;
   const phase = givenPhase ?? 0.5;
   const washout = markingWashout(settings.clouds);
   const radius = diameter / 2;
@@ -1030,6 +1129,7 @@ export function renderMoon(pixels, size, picture, diameter, top, screenHeight, s
       for (let channel = 0; channel < 3; channel++) {
         brighter = Math.max(brighter, targetColor[channel] - skyShown[channel]);
       }
+      if (discCover >= 1) brightestShown = Math.max(brightestShown, brighter);
       const alpha = Math.max(discCover, clamp(brighter / GLOW_OPAQUE_STEPS, 0, 1));
       if (alpha === 0) {
         pixels[offset] = pixels[offset + 1] = pixels[offset + 2] = pixels[offset + 3] = 0;
@@ -1042,6 +1142,7 @@ export function renderMoon(pixels, size, picture, diameter, top, screenHeight, s
       pixels[offset + 3] = Math.round(255 * alpha);
     }
   }
+  return brightestShown / 255;
 }
 
 function luminanceOf([red, green, blue]) {
@@ -1062,12 +1163,13 @@ function rowColors(settings, height) {
   const { colors, cloudBrightness, hazeContrast: contrastRange } = settings;
   const lighting = settings.cloudLighting ?? DEFAULT_CLOUD_LIGHTING;
   const scene = prepareScene(settings);
-  const { toScreen, skyAt, layers, hazeDimming } = scene;
+  const { toScreen, skyAt, layers, hazeDimming, cloudShade } = scene;
 
-  // Brightness (linear light) of cloud lit like the given sky sample
+  // Brightness (linear light) of cloud lit like the given sky sample, shaded
+  // by how dark the clouds are
   const cloudLightFrom = ({ rgb: [red, green, blue], luminance }) => {
     const skyOnScreen = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
-    return Math.min(1, skyOnScreen * cloudToSkyRatio(luminance, cloudBrightness));
+    return Math.min(1, skyOnScreen * cloudToSkyRatio(luminance, cloudBrightness) * cloudShade);
   };
 
   const rowHeight = (row) => 1 - (row + 0.5) / height; // 0 at the bottom of the screen, 1 at the top
@@ -1585,12 +1687,13 @@ function prepareScene({
   const skyStops = colors.map(({ hue, saturation, brightness }) =>
     withScreenBrightness(hsvToLinearRgb(hue, saturation, 1), toScreen(brightness)),
   );
-  // How thick the haze is, from 0 at HAZE_START total cover to 1 at 100%
-  const hazeThickness = clamp((clouds.total - HAZE_START) / (100 - HAZE_START), 0, 1);
+  // How thick the haze is, from 0 at HAZE_START overcast to 1 at 100%
+  const overcast = overcastOf(clouds);
+  const hazeThickness = clamp((overcast - HAZE_START) / (100 - HAZE_START), 0, 1);
   const cloudMaxOpacity =
     1 -
     (1 - CLOUD_FADE_END_OPACITY) *
-      clamp((clouds.total - CLOUD_FADE_START) / (100 - CLOUD_FADE_START), 0, 1);
+      clamp((overcast - CLOUD_FADE_START) / (100 - CLOUD_FADE_START), 0, 1);
   // Where the sun is on screen (0 at the bottom, 1 at the top), placed by the
   // sky colors' view elevations. It's below 0 when the sun is low.
   const sunOnScreen =
@@ -1649,8 +1752,18 @@ function prepareScene({
     ),
     skyAt,
     layers,
-    hazeOpacity: HAZE_MAX_OPACITY * hazeThickness,
-    hazeDimming: HAZE_MAX_DIMMING * hazeThickness,
+    hazeOpacity:
+      HAZE_MAX_OPACITY *
+      hazeThickness *
+      (1 -
+        HAZE_THINNING.most *
+          clamp(
+            (HAZE_THINNING.from - (clouds.darkness ?? CLOUD_DARKNESS_TYPICAL)) / (HAZE_THINNING.from - HAZE_THINNING.to),
+            0,
+            1,
+          )),
+    hazeDimming: byCloudDarkness(clouds, HAZE_DIMMING) * hazeThickness,
+    cloudShade: byCloudDarkness(clouds, CLOUD_SHADE),
     cloudMaxOpacity,
   };
 }

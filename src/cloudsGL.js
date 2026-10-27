@@ -1,5 +1,5 @@
 import { permutationImage } from './noise.js';
-import { CLOUD_SHADER_CONSTANTS, cloudNoiseOrigins } from './skyImage.js';
+import { CLOUD_SHADER_CONSTANTS, MOON_CLOUD_TINT, MOON_CLOUD_TINT_AT, cloudNoiseOrigins } from './skyImage.js';
 
 /*
  * Draws the cloud layers with WebGL 1, which even a Raspberry Pi's GPU can do
@@ -43,12 +43,14 @@ uniform float thickness;
 uniform float depthNeeded;
 uniform float boost;
 uniform float boostContrast;
+uniform vec4 moonLight;  // x, y (from the top), radius, strength: see setMoonLight in cpuClouds.js
 uniform vec4 layerBand[${MAX_LAYERS}];    // bottom, top, cover, threshold
 uniform vec4 layerNoise[${MAX_LAYERS}];   // frequency x, frequency y, boost share, showing
 uniform vec4 layerOrigin[${MAX_LAYERS}];  // density x, density y, lumps x, lumps y
 
 const vec3 BLACK_LEVEL = vec3(${BLACK_LEVEL.map((v) => float(v / 255)).join(', ')});
 const vec3 LUMINANCE = vec3(0.2126, 0.7152, 0.0722);
+const vec3 MOON_CLOUD_TINT = vec3(${MOON_CLOUD_TINT.map((value) => float(value / 255)).join(', ')});
 
 vec4 permutationAt(float i) {
   return texture2D(permutation, vec2((i + 0.5) / 512.0, 0.5));
@@ -218,7 +220,16 @@ void main() {
   vec3 behindScreen = skyTexel.rgb;
   vec3 behind = decodeSrgb((behindScreen - BLACK_LEVEL) / (1.0 - BLACK_LEVEL));
   vec3 target = toScreen(behind + (light - behind) * alpha);
-  gl_FragColor = vec4(clamp(target - behindScreen * (1.0 - alpha), 0.0, alpha), alpha);
+  vec3 color = clamp(target - behindScreen * (1.0 - alpha), 0.0, alpha);
+  // The moonlight on the clouds' glowing edges around the moon
+  // (moonCloudFalloff in skyImage.js)
+  if (moonLight.w > 0.0) {
+    float share = clamp(distance(gl_FragCoord.xy, vec2(moonLight.x, height - moonLight.y)) / moonLight.z, 0.0, 1.0);
+    float strength = min(1.0, moonLight.w * (1.0 - share) * (1.0 - share)) * thinness;
+    vec3 tint = mix(vec3(1.0), MOON_CLOUD_TINT, clamp(share / ${float(MOON_CLOUD_TINT_AT)}, 0.0, 1.0));
+    color += (tint * alpha - color) * strength;
+  }
+  gl_FragColor = vec4(color, alpha);
 }
 `;
 
@@ -320,6 +331,8 @@ export function createCloudRenderer(canvas) {
     gl.uniform1f(uniform('depthNeeded'), uniforms.depthNeeded);
     gl.uniform1f(uniform('boost'), uniforms.boost);
     gl.uniform1f(uniform('boostContrast'), uniforms.boostContrast);
+    const moon = uniforms.moonLight;
+    gl.uniform4f(uniform('moonLight'), moon?.x ?? 0, moon?.y ?? 0, moon?.radius ?? 1, moon?.strength ?? 0);
     const origins = cloudNoiseOrigins({ ...settings, time });
     const band = new Float32Array(MAX_LAYERS * 4);
     const noise = new Float32Array(MAX_LAYERS * 4);

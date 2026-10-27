@@ -183,14 +183,23 @@ setInterval(async () => {
 }, AUTOMATION_INTERVAL);
 
 // Display settings kept for every screen (see UiManager): GET reads them,
-// POST ?flavor=glass|default and/or ?wakeTime=HH:MM changes them
+// POST ?flavor=glass|default, ?wakeTime=HH:MM, ?showRain=true|false and/or
+// ?showSnow=true|false changes them
 app.get('/api/ui', async (req, res) => {
   res.json(await UiManager.GetSettings());
 });
 
 app.post('/api/ui', async (req, res) => {
   try {
-    res.json(await UiManager.SetSettings({ flavor: req.query.flavor, wakeTime: req.query.wakeTime }));
+    const flag = (value) => (value === undefined ? undefined : value === 'true' ? true : value === 'false' ? false : value);
+    res.json(
+      await UiManager.SetSettings({
+        flavor: req.query.flavor,
+        wakeTime: req.query.wakeTime,
+        showRain: flag(req.query.showRain),
+        showSnow: flag(req.query.showSnow),
+      }),
+    );
   } catch (error) {
     res.status(400).json({ error: error.message });
   }

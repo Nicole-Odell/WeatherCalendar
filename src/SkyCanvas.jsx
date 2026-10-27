@@ -64,7 +64,7 @@ export default function SkyCanvas({ onStatus, cloudSpeed, paused, fadeDuration, 
     stars,
     precipitation,
   } = settings;
-  const { total, low, mid, high } = clouds;
+  const { total, low, mid, high, darkness } = clouds;
   useEffect(() => {
     renderer.current.setScene({
       settings: {
@@ -72,7 +72,7 @@ export default function SkyCanvas({ onStatus, cloudSpeed, paused, fadeDuration, 
         sunlight,
         sunElevation,
         exposure,
-        clouds: { total, low, mid, high },
+        clouds: { total, low, mid, high, darkness },
         cloudBrightness,
         cloudLighting,
         cloudGlow,
@@ -94,6 +94,7 @@ export default function SkyCanvas({ onStatus, cloudSpeed, paused, fadeDuration, 
     low,
     mid,
     high,
+    darkness,
     cloudBrightness,
     cloudLighting,
     cloudGlow,
