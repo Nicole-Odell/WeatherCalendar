@@ -70,6 +70,11 @@ const MOON_ANGLE_STEP = 0.5;
 // recolor takes a while there
 const CPU_RECOLOR_STEP = 1;
 
+// Where the page's pop-up panels sit, up the screen (0 at the bottom, 1 at
+// the top): the lighting panel near the top, and the daily focus's options
+// under the Today title
+const PANEL_SKY_HEIGHTS = { lighting: 0.88, focus: 0.53 };
+
 /**
  * Draws the sky, stars, moon, clouds, haze and rain or snow on canvases the
  * page stacks, either on the page or on a worker thread (see skyWorker.js).
@@ -521,6 +526,17 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
     return context.getImageData(0, 0, size, size);
   }
 
+  // The color on screen `up` the screen (0 at the bottom, 1 at the top) of
+  // the sky with the haze over it (as the page puts the haze canvas over the
+  // sky's), from their columns, as [red, green, blue] (0–255)
+  function hazedSkyColor(skyColumn, hazeColumn, height, up) {
+    const row = Math.min(height - 1, Math.max(0, Math.round((1 - up) * height - 0.5)));
+    const opacity = hazeColumn[row * 4 + 3] / 255;
+    return [0, 1, 2].map((channel) =>
+      Math.round(hazeColumn[row * 4 + channel] * opacity + skyColumn[row * 4 + channel] * (1 - opacity)),
+    );
+  }
+
   // Draws every layer for the current settings, fading them in
   function drawAll() {
     const started = performance.now();
@@ -563,6 +579,14 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
         cpuClouds:
           state.cloudMode === 'cpu' ? { ...state.cloudRenderer.timings(), forced: forceCpuClouds } : null,
         animating: state.animating,
+        // The sky's color as seen behind the page's pop-up panels (see
+        // PANEL_SKY_HEIGHTS), which they're filled with
+        panelSky: Object.fromEntries(
+          Object.entries(PANEL_SKY_HEIGHTS).map(([name, up]) => [
+            name,
+            hazedSkyColor(skyColumn, hazeColumn, cloudHeight, up),
+          ]),
+        ),
         fullUpdate: {
           totalMs: done - started,
           skyMs: skyDone - started,

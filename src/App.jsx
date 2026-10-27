@@ -11,7 +11,6 @@ import {
   DEFAULT_STARS,
   overcastOf,
   skyBrightnessAt,
-  skyColorAt,
   topSkyBrightness,
 } from './skyImage.js';
 import { toImperial } from './units.js';
@@ -318,9 +317,8 @@ const DARK_SKY_BRIGHTNESS = 0.3;
 // panels are only repainted (each change repaints them) when it's moved
 // enough to see: rarely by day and at night, every minute or so at dusk
 const SKY_LIGHT_FULL = 0.75;
-// Where the lighting panel sits (up the screen, 0 at the bottom), for its
-// fill's sky color, and how much that color must change before it's updated
-const LIGHTING_PANEL_HEIGHT = 0.88;
+// How much the sky's color behind the pop-up panels must change before
+// their fills are updated
 const SKY_COLOR_STEP = 4;
 const SKY_LIGHT_STEP = 0.02;
 // How overcast it is by day (--sky-overcast on the page, 0 up), which tints
@@ -357,17 +355,23 @@ const DarkSkyMarker = memo(function DarkSkyMarker({ exposure, cloudCover = 0, cl
   useEffect(() => {
     document.documentElement.style.setProperty('--sky-overcast', overcast.toFixed(2));
   }, [overcast]);
-  // The sky's color where the lighting panel sits, near the top of the
-  // screen (--sky-top-color), which it's filled with so it looks as if over
-  // open sky (see .lighting-panel); only changed when it does by more than
-  // SKY_COLOR_STEP, to keep repaints rare
-  const topColor = scene
-    ? skyColorAt(scene, LIGHTING_PANEL_HEIGHT).map((value) => Math.round(value / SKY_COLOR_STEP) * SKY_COLOR_STEP)
-    : null;
-  const topColorText = topColor ? `rgb(${topColor.join(', ')})` : null;
+  // The sky's color as seen (with the haze over it) where the pop-up panels
+  // sit, which they're filled with so they look as if over open sky (see
+  // .lighting-panel): the lighting panel's near the top of the screen
+  // (--sky-top-color) and the daily focus's options' (--sky-focus-color),
+  // from the sky's renderer (see PANEL_SKY_HEIGHTS in skyRenderer.js); only
+  // changed when they do by more than SKY_COLOR_STEP, to keep repaints rare
+  const panelSky = useStore(statusStore)?.panelSky;
+  const colorText = (color) =>
+    color ? `rgb(${color.map((value) => Math.round(value / SKY_COLOR_STEP) * SKY_COLOR_STEP).join(', ')})` : null;
+  const topColorText = colorText(panelSky && panelSky.lighting);
+  const focusColorText = colorText(panelSky && panelSky.focus);
   useEffect(() => {
     if (topColorText) document.documentElement.style.setProperty('--sky-top-color', topColorText);
   }, [topColorText]);
+  useEffect(() => {
+    if (focusColorText) document.documentElement.style.setProperty('--sky-focus-color', focusColorText);
+  }, [focusColorText]);
   return null;
 });
 
@@ -969,13 +973,15 @@ const AUTOMATION_SAVE_DELAY = 500;
 const BRIGHTNESS_SEND_INTERVAL = 200;
 
 // The times an automation can be set for: a clock time, or minutes from a
-// sun event
+// sun event or the wake-up time (set in Settings, an hour earlier on office
+// days, see OFFICE_DAYS)
 const AUTOMATION_TIMES = [
   { value: 'time', label: 'Time' },
   { value: 'sunset', label: 'Sunset' },
   { value: 'sunrise', label: 'Sunrise' },
   { value: 'astroDusk', label: 'Astro Dusk' },
   { value: 'astroDawn', label: 'Astro Dawn' },
+  { value: 'wakeUp', label: 'Wake-up' },
 ];
 const AUTOMATION_CONDITIONS = [
   { value: 'always', label: 'Always' },
@@ -1487,6 +1493,8 @@ function CustomTaskIcon({ icon, doneIcon, done, placeClassName = '', burstTarget
 }
 
 // The days (0 is Sunday) the office task shows: Tuesday, Wednesday, Thursday
+// (also in server/LightAutomation.js, for the wake-up time, as is
+// OFFICE_EARLIER_MINUTES)
 const OFFICE_DAYS = [2, 3, 4];
 
 // The sleep estimate under the sleep task late at night: hours from going to
@@ -1575,6 +1583,89 @@ function TaskButton({ done, onPress, title, burstTarget, below, children }) {
   );
 }
 
+// The daily focus's color (Google Calendar's Peacock, see server/CalendarManager.js)
+const FOCUS_COLOR = '#039be5';
+// How far above the bottom of the screen the focus's options end, at most
+// (a share of the screen's width, as vw)
+const FOCUS_LIST_BOTTOM_GAP = 0.02;
+
+/**
+ * The day's focus, between the Today title and the tasks: a panel drawn as a
+ * button opening a list of the `options` (as wide as it and over it, top to
+ * top) to choose from. Until one's chosen (each day starts without one),
+ * today's greets the morning over two lines, drawn as a calendar event is,
+ * in Peacock; once chosen it's a control, one line: the focus centered, with
+ * a small "Focus" at its left. Not
+ * tappable unless `changeable` (as the tasks).
+ */
+function DailyFocus({ focus, options, today, changeable, onChoose }) {
+  const [open, setOpen] = useState(false);
+  // A tap anywhere outside the list closes it
+  const listRef = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const outside = (event) => {
+      if (listRef.current && !listRef.current.contains(event.target)) setOpen(false);
+    };
+    document.addEventListener('pointerdown', outside, true);
+    return () => document.removeEventListener('pointerdown', outside, true);
+  }, [open]);
+  // The list ends above the bottom of the screen at most (see
+  // FOCUS_LIST_BOTTOM_GAP), scrolling within itself if it's longer, so the
+  // page doesn't grow to scroll
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    if (!open || !list) return;
+    const bottom = window.innerHeight - FOCUS_LIST_BOTTOM_GAP * window.innerWidth;
+    list.style.maxHeight = `${Math.max(0, bottom - list.getBoundingClientRect().top)}px`;
+  }, [open]);
+  const greeting = !focus && today;
+  return (
+    <div className="daily-focus-place">
+      <button
+        type="button"
+        className={`daily-focus${greeting ? ' greeting' : ''}${changeable ? '' : ' locked'}`}
+        style={greeting ? { '--event-color': FOCUS_COLOR } : undefined}
+        onClick={() => setOpen(true)}
+      >
+        {greeting ? (
+          <>
+            <span className="calendar-event-fill" style={{ backgroundColor: FOCUS_COLOR }} />
+            <span className="calendar-event-edge" />
+            <span className="daily-focus-text">
+              Good morning, Nicole! <EmojiText text="😊" />
+              <br />
+              What is your focus for today?
+            </span>
+          </>
+        ) : (
+          <>
+            <span className="daily-focus-label">Focus</span>
+            <span className="daily-focus-text">{focus ? <EmojiText text={focus} /> : 'none'}</span>
+          </>
+        )}
+      </button>
+      {open && (
+        <div ref={listRef} className="daily-focus-list">
+          {options.map((option) => (
+            <button
+              type="button"
+              key={option}
+              className={`daily-focus-option${option === focus ? ' chosen' : ''}`}
+              onClick={() => {
+                setOpen(false);
+                if (option !== focus) onChoose(option);
+              }}
+            >
+              <EmojiText text={option} />
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /**
  * Today's tasks, each a button that marks it done (it can't be undone until
  * they all reset at sunrise, or from Settings): 7 hours' sleep, leaving home,
@@ -1583,7 +1674,7 @@ function TaskButton({ done, onPress, title, burstTarget, below, children }) {
  * stretching. `tasks` is
  * when each was done (see server/TasksManager.js); `onDo(task)` marks one done.
  */
-function TodayTasks({ tasks, onDo, dayOffset, onShiftDay, anyDay, wakeTime }) {
+function TodayTasks({ tasks, onDo, focusOptions, onFocus, dayOffset, onShiftDay, anyDay, wakeTime }) {
   if (!tasks || !tasks.days) return null;
   // The day shown (the calendar's, see dayFromToday), its tasks' progress,
   // and whether they can still be changed (today's and yesterday's, or any
@@ -1632,6 +1723,13 @@ function TodayTasks({ tasks, onDo, dayOffset, onShiftDay, anyDay, wakeTime }) {
           </button>
         )}
       </div>
+      <DailyFocus
+        focus={tasks.days[date] && tasks.days[date].focus}
+        options={focusOptions}
+        today={dayOffset === 0}
+        changeable={changeable}
+        onChoose={(focus) => onFocus(focus, date)}
+      />
       {/* Greyed out, and not tappable, on days other than today and yesterday */}
       <div className={`today-tasks${changeable ? '' : ' locked'}`}>
         <TaskButton
@@ -2345,6 +2443,8 @@ export default function App() {
   const [sunTimes, setSunTimes] = useState(null);
   // When each daily task was done (see server/TasksManager.js)
   const [tasks, setTasks] = useState(null);
+  // The daily focus's options (see server/TasksManager.js), loaded with the tasks
+  const [focusOptions, setFocusOptions] = useState([]);
   // Whether tasks can be changed on any day, not just today and yesterday
   // (a setting in Settings, off whenever the page loads)
   const [tasksAnyDay, setTasksAnyDay] = useState(false);
@@ -2504,6 +2604,7 @@ export default function App() {
   async function loadTasks() {
     try {
       setTasks(await fetchJson('/api/tasks'));
+      setFocusOptions((await fetchJson('/api/tasks/focus-options')).options);
     } catch (err) {
       console.warn('Tasks unavailable:', err.message);
     }
@@ -2583,7 +2684,7 @@ export default function App() {
       const days = { ...current.days };
       const completed = { ...((days[date] && days[date].completedTasks) || {}) };
       completed[task] = (completed[task] || 0) + 1;
-      days[date] = { completedTasks: completed };
+      days[date] = { ...days[date], completedTasks: completed };
       return { ...current, days };
     });
     try {
@@ -2594,11 +2695,36 @@ export default function App() {
     }
   }
 
+  // Sets the focus of the day `date` (YYYY-MM-DD), showing it straight away
+  async function chooseFocus(focus, date) {
+    setTasks((current) => {
+      const days = { ...current.days };
+      days[date] = { completedTasks: {}, ...days[date], focus };
+      return { ...current, days };
+    });
+    try {
+      setTasks(
+        await fetchJson(`/api/tasks/focus?date=${date}&focus=${encodeURIComponent(focus)}`, { method: 'POST' }),
+      );
+    } catch (err) {
+      console.warn('Could not set the focus:', err.message);
+      loadTasks();
+    }
+  }
+
   async function resetTasks() {
     try {
       setTasks(await fetchJson(`/api/tasks/reset?date=${dayFromToday(0)}`, { method: 'POST' }));
     } catch (err) {
       console.warn('Could not reset the tasks:', err.message);
+    }
+  }
+
+  async function resetFocus() {
+    try {
+      setTasks(await fetchJson(`/api/tasks/focus/reset?date=${dayFromToday(0)}`, { method: 'POST' }));
+    } catch (err) {
+      console.warn('Could not reset the focus:', err.message);
     }
   }
 
@@ -3041,6 +3167,8 @@ export default function App() {
           <TodayTasks
             tasks={tasks}
             onDo={doTask}
+            focusOptions={focusOptions}
+            onFocus={chooseFocus}
             anyDay={tasksAnyDay}
             wakeTime={shownOffset !== calendarOffset ? wakeTime : null}
             dayOffset={calendarOffset}
@@ -3077,6 +3205,11 @@ export default function App() {
             <input type="checkbox" checked={tasksAnyDay} onChange={(event) => setTasksAnyDay(event.target.checked)} />
             Allow changing tasks on any day
           </label>
+        </p>
+        <p>
+          <button type="button" onClick={resetFocus}>
+            Reset today's focus
+          </button>
         </p>
         <p>
           <label>

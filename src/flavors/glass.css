@@ -95,7 +95,8 @@
    their top (see --event-shadow) */
 :root.flavor-glass .calendar-event,
 :root.flavor-glass .calendar-all-day-event,
-:root.flavor-glass .calendar-task.done {
+:root.flavor-glass .calendar-task.done,
+:root.flavor-glass .daily-focus.greeting {
   border: none;
 }
 

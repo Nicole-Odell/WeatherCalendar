@@ -266,7 +266,32 @@ app.post('/api/tasks/:task/done', async (req, res) => {
   }
 });
 
-// Clears every task on the day ?date=YYYY-MM-DD, so none are done
+// The daily focus's options (see TasksManager.GetFocusOptions)
+app.get('/api/tasks/focus-options', async (req, res) => {
+  res.json(await TasksManager.GetFocusOptions());
+});
+
+// Sets the focus of the day ?date=YYYY-MM-DD to ?focus, one of the options
+app.post('/api/tasks/focus', async (req, res) => {
+  try {
+    res.json(await TasksManager.SetFocus(req.query.focus, req.query.date));
+  } catch (error) {
+    console.error('Failed to set the focus:', error);
+    res.status(400).json({ error: error.message });
+  }
+});
+
+// Clears the focus of the day ?date=YYYY-MM-DD
+app.post('/api/tasks/focus/reset', async (req, res) => {
+  try {
+    res.json(await TasksManager.ResetFocus(req.query.date));
+  } catch (error) {
+    console.error('Failed to reset the focus:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Clears every task on the day ?date=YYYY-MM-DD, so none are done (keeping its focus)
 app.post('/api/tasks/reset', async (req, res) => {
   try {
     res.json(await TasksManager.ResetTasks(req.query.date));

@@ -48,12 +48,14 @@
    (--event-color, set by the page), white at night */
 :root.flavor-default .calendar-event,
 :root.flavor-default .calendar-all-day-event,
-:root.flavor-default .calendar-task.done {
+:root.flavor-default .calendar-task.done,
+:root.flavor-default .daily-focus.greeting {
   border: 1px solid var(--event-color);
 }
 
 :root.flavor-default.dark-sky .calendar-event,
 :root.flavor-default.dark-sky .calendar-all-day-event,
-:root.flavor-default.dark-sky .calendar-task.done {
+:root.flavor-default.dark-sky .calendar-task.done,
+:root.flavor-default.dark-sky .daily-focus.greeting {
   border-color: white;
 }

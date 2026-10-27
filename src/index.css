@@ -445,7 +445,7 @@ a {
   border: var(--panel-border);
   border-radius: 3vw;
   /* Its glass over the sky's own color where it sits (--sky-top-color, set
-     by the page from the sky), so it looks as if over open sky, bright by
+     by the page from the sky, with the haze over it), so it looks as if over open sky, bright by
      day and dark at night, while what's behind it, like the clock, doesn't
      show through */
   background: var(--panel-background), var(--sky-top-color, rgb(40, 50, 70));
@@ -835,7 +835,7 @@ a {
 
 .today-title {
   margin-top: var(--today-title-margin-top);
-  margin-bottom: 1.5vw;
+  margin-bottom: 2vw;
   text-align: center;
   white-space: nowrap;
 }
@@ -923,12 +923,111 @@ a {
   display: flex;
   /* (centered under the title, however wide the title is) */
   justify-content: center;
-  margin-top: 3vw;
+  margin-top: 1vw;
 }
 
 /* Spacing with margins, as Chromium 74 (on the Pi 3) has no gap in flex layouts */
 .today-tasks > * + * {
   margin-left: 0vw;
+}
+
+/* The day's focus, between the title and the tasks, as wide as the Google
+   Tasks below: a button, until one's chosen two centered lines greeting the
+   morning, drawn as a calendar event is (a fill fading into its color, set
+   by the page, and the flavor's edge and shadow for events), and once chosen
+   a control, one line (the focus centered, with a small "Focus" at its left) */
+.daily-focus-place {
+  position: relative;
+  width: 60vw;
+  /* (the tasks below are raised half their height, see .task) */
+  margin: 0 auto 0vw;
+}
+
+.daily-focus {
+  position: relative;
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 1vw 1.5vw;
+  border-radius: 1vw;
+  font-size: 3.5vw;
+  line-height: 1.3;
+  /* (the calendar's text shadow, as buttons otherwise set the page's) */
+  text-shadow: var(--calendar-text-shadow);
+  text-align: center;
+  white-space: nowrap;
+}
+
+.daily-focus.greeting {
+  padding: 1.5vw;
+  background: transparent;
+  box-shadow: var(--event-shadow);
+  -webkit-backdrop-filter: var(--event-backdrop);
+  backdrop-filter: var(--event-backdrop);
+}
+
+.daily-focus.locked {
+  pointer-events: none;
+}
+
+/* (its text over the fill) */
+.daily-focus-text {
+  position: relative;
+  font-weight: bold;
+}
+
+.daily-focus-label {
+  position: absolute;
+  top: 50%;
+  left: 1.5vw;
+  transform: translateY(-50%);
+  font-size: 2.6vw;
+}
+
+/* Its options, over it (top to top, as wide as it) and what's below, in the
+   lighting panel's style: a row for each, scrolling within it (with no
+   scroll bar, as the page) when there are more than fit above the bottom of
+   the screen (its height capped by the page) */
+.daily-focus-list {
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  left: 0;
+  right: 0;
+  box-sizing: border-box;
+  padding: 1.5vw;
+  border: var(--panel-border);
+  border-radius: 1vw;
+  /* (over the sky's color where it sits, as the lighting panel) */
+  background: var(--panel-background), var(--sky-focus-color, rgb(40, 50, 70));
+  box-shadow: var(--panel-shadow), var(--panel-outer-shadow);
+  -webkit-backdrop-filter: var(--panel-backdrop);
+  backdrop-filter: var(--panel-backdrop);
+  text-shadow: var(--calendar-text-shadow);
+  overflow-y: auto;
+  /* (scrolling to its end doesn't go on to scroll the page) */
+  overscroll-behavior: contain;
+}
+
+.daily-focus-option {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 1.2vw 1.5vw;
+  border-radius: 1vw;
+  font-size: 3.5vw;
+  line-height: 1.3;
+  text-shadow: inherit;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.daily-focus-option + .daily-focus-option {
+  margin-top: 1vw;
+}
+
+.daily-focus-option.chosen {
+  font-weight: bold;
 }
 
 /* Each task: a button as tall as a square around one icon, and as wide as
@@ -1425,11 +1524,6 @@ a {
   cursor: default;
 }
 
-/* (the event-style fill rounded as the row is, rather than the row clipping
-   it, which would clip the burst too) */
-.calendar-task .calendar-event-fill {
-  border-radius: inherit;
-}
 
 /* (its contents over the event-style fill) */
 .calendar-task-check-place,
@@ -1509,13 +1603,16 @@ img.emoji {
 
 /* Each event's fill: its calendar's color (set by the page), faded from
    --calendar-fill-top to --calendar-fill-bottom (set by the flavor), drawn
-   behind its text */
+   behind its text, and rounded as the block it fills is (so blocks that
+   don't clip their contents, like Google Tasks' rows, whose burst would be
+   clipped too, and the daily focus, are filled only inside their edges) */
 .calendar-event-fill {
   position: absolute;
   top: 0;
   right: 0;
   bottom: 0;
   left: 0;
+  border-radius: inherit;
   -webkit-mask-image: linear-gradient(to bottom, var(--calendar-fill-top), var(--calendar-fill-bottom));
   mask-image: linear-gradient(to bottom, var(--calendar-fill-top), var(--calendar-fill-bottom));
 }
