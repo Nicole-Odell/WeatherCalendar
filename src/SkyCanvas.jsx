@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { onSkyHold } from './skyHold.js';
 import { createSkyRenderer } from './skyRenderer.js';
 // Built as a classic worker script for Chromium 74 (see vite.config.js)
 import SkyWorker from './skyWorker.js?worker';
@@ -8,9 +9,11 @@ import SkyWorker from './skyWorker.js?worker';
  * Drawing happens on a worker thread where the browser can hand canvases to
  * one (OffscreenCanvas), so it never holds up taps or page updates; otherwise
  * on the page itself. Reports how drawing is going through onStatus. While
- * `paused`, the clouds stop moving (new scenes are still drawn).
+ * `paused`, the clouds stop moving (new scenes are still drawn). `cloudStep`
+ * is how far the clouds move with each new sky, in screen pixels. Redraws
+ * wait while the sky is held (see skyHold.js).
  */
-export default function SkyCanvas({ onStatus, cloudSpeed, paused, fadeDuration, ...settings }) {
+export default function SkyCanvas({ onStatus, cloudStep, paused, fadeDuration, ...settings }) {
   const containerRef = useRef(null);
   const renderer = useRef(null);
   const callbacks = useRef(null);
@@ -106,8 +109,27 @@ export default function SkyCanvas({ onStatus, cloudSpeed, paused, fadeDuration, 
   ]);
 
   useEffect(() => {
-    renderer.current.setCloudSpeed(cloudSpeed ?? 1);
-  }, [cloudSpeed]);
+    renderer.current.setCloudStep(cloudStep ?? 1);
+  }, [cloudStep]);
+
+  // Held while the page responds to a tap or animates (see skyHold.js):
+  // held from when a hold starts until it ends, however it's extended
+  useEffect(() => {
+    let timer = 0;
+    const release = () => {
+      timer = 0;
+      renderer.current?.setHeld(false);
+    };
+    const stop = onSkyHold((until) => {
+      if (!timer) renderer.current.setHeld(true);
+      clearTimeout(timer);
+      timer = setTimeout(release, Math.max(0, until - performance.now()));
+    });
+    return () => {
+      stop();
+      clearTimeout(timer);
+    };
+  }, []);
 
   // Bedtime: cloud motion pauses while the screen is off
   useEffect(() => {
@@ -119,8 +141,8 @@ export default function SkyCanvas({ onStatus, cloudSpeed, paused, fadeDuration, 
 
 /**
  * Starts drawing on `canvases`: on a worker thread if the browser can hand
- * canvases to one, otherwise on the page. Returns { setScene, setCloudSpeed,
- * setPaused, dispose }; `report` gets the renderer's reports, with each status saying
+ * canvases to one, otherwise on the page. Returns { setScene, setCloudStep,
+ * setPaused, setHeld, dispose }; `report` gets the renderer's reports, with each status saying
  * which thread it's drawing on.
  */
 function startRenderer(canvases, report) {
@@ -140,8 +162,9 @@ function startRenderer(canvases, report) {
       worker.onerror = (event) => console.error('Sky worker failed:', event.message);
       return {
         setScene: (props) => worker.postMessage({ type: 'scene', props }),
-        setCloudSpeed: (speed) => worker.postMessage({ type: 'cloudSpeed', speed }),
+        setCloudStep: (pixels) => worker.postMessage({ type: 'cloudStep', pixels }),
         setPaused: (paused) => worker.postMessage({ type: 'paused', paused }),
+        setHeld: (held) => worker.postMessage({ type: 'held', held }),
         dispose: () => worker.terminate(),
       };
     } catch (error) {
@@ -158,9 +181,11 @@ function startRenderer(canvases, report) {
 }
 
 // Shows the canvases the renderer reports on: hidden while they've nothing
-// to show (so they aren't composited), and the moon placed and sized (in
-// CSS pixels) where it's drawn
-function showLayers(canvases, { stars, clouds, precipitation, moon }) {
+// to show, or the clouds' canvas shows them (so they aren't composited), and
+// the moon placed and sized (in CSS pixels) where it's drawn
+function showLayers(canvases, { sky, haze, stars, clouds, precipitation, moon }) {
+  canvases.sky.style.display = sky ? '' : 'none';
+  canvases.haze.style.display = haze ? '' : 'none';
   canvases.stars.style.display = stars ? '' : 'none';
   canvases.clouds.style.display = clouds ? '' : 'none';
   canvases.precipitation.style.display = precipitation ? '' : 'none';

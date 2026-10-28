@@ -1,5 +1,7 @@
 import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import SkyCanvas from './SkyCanvas.jsx';
+import { HOLD_AFTER_TAP, holdSky } from './skyHold.js';
+import { EASE_OUT, animate, cubicBezier, keyframes } from './frameAnimation.js';
 import { createStore, useStore } from './store.js';
 import {
   CLOUD_DARKNESS_TYPICAL,
@@ -235,12 +237,16 @@ const STEP_MINUTES = 5;
 // The time the Noon button sets, as a time input value
 const NOON = '12:00';
 
-// The sky is recalculated and redrawn this often (ms), fading in over SKY_FADE
-// ms. Live, the server streams it (see /api/sky/stream) at the same rate.
-const SKY_UPDATE_INTERVAL = 1000;
-const SKY_FADE = 300;
-// Test play steps the sky color time forward this many minutes each sky update
-const PLAY_STEP_MINUTES = 1;
+// The sky is recalculated and redrawn this often (ms), each change shown at
+// once (SKY_FADE): on the Pi 3 every redraw of the sky, and so every step of
+// a fade, is a full-screen redraw that taps and animations wait behind. Live,
+// the server streams it (see /api/sky/stream) at the same rate. The clouds
+// move on with each redraw (see the cloud step in Settings).
+const SKY_UPDATE_INTERVAL = 3000;
+const SKY_FADE = 0;
+// Test play steps the sky color time forward this many minutes each sky
+// update (a minute a second)
+const PLAY_STEP_MINUTES = 3;
 // How often the weather is reloaded from the server (ms). The server only
 // fetches new weather every 15 minutes; this picks it up soon after.
 const WEATHER_RELOAD_INTERVAL = 60 * 1000;
@@ -273,9 +279,10 @@ async function screenIsOff() {
     return false;
   }
 }
-// Cloud motion speed, as a multiple of the normal drift
-const DEFAULT_CLOUD_SPEED = 0.5;
-const MAX_CLOUD_SPEED = 20;
+// How far the clouds move with each new sky (every SKY_UPDATE_INTERVAL), in
+// screen pixels (see CLOUD_STEP_SPEED in skyImage.js)
+const DEFAULT_CLOUD_STEP = 1;
+const MAX_CLOUD_STEP = 20;
 
 const milliseconds = (value) => `${value.toFixed(1)} ms`;
 
@@ -1069,11 +1076,12 @@ function AutomationRow({ automation, canFade, onChange, onDelete }) {
  * power: a button at its top right, white while on and just the icon's
  * shadow outline while off. Their state is loaded each time it opens.
  */
-function LightingPanel({ onClose }) {
+function LightingPanel({ open, onClose }) {
   // A tap anywhere outside the panel (or its button, which closes it
   // itself) closes it
   const panelRef = useRef(null);
   useEffect(() => {
+    if (!open) return undefined;
     const outside = (event) => {
       const panel = panelRef.current;
       if (!panel || panel.contains(event.target)) return;
@@ -1082,7 +1090,7 @@ function LightingPanel({ onClose }) {
     };
     document.addEventListener('pointerdown', outside, true);
     return () => document.removeEventListener('pointerdown', outside, true);
-  }, [onClose]);
+  }, [open, onClose]);
   // Whether the lights are on, or null until known
   const [powered, setPowered] = useState(null);
   // The lights' brightness (0–100, LightLine's 0–1), or null until known
@@ -1110,13 +1118,14 @@ function LightingPanel({ onClose }) {
     () => () => {
       if (!saveTimer.current) return;
       clearTimeout(saveTimer.current);
+      saveTimer.current = 0;
       fetch('/api/lights/automations', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ automations: pendingSave.current }),
       });
     },
-    [],
+    [open],
   );
   // Brightness changes are sent to LightLine at most every
   // BRIGHTNESS_SEND_INTERVAL: the first straight away, then the latest each
@@ -1147,7 +1156,10 @@ function LightingPanel({ onClose }) {
     sendBrightness(value);
   }
   const [error, setError] = useState(null);
+  // Loaded each time it opens
   useEffect(() => {
+    if (!open) return;
+    setError(null);
     fetchJson('/api/lights/power')
       .then((state) => setPowered(state.powered))
       .catch((err) => setError(err.message));
@@ -1157,7 +1169,7 @@ function LightingPanel({ onClose }) {
     fetchJson('/api/lights/automations')
       .then((state) => setAutomations(state.automations))
       .catch((err) => setError(err.message));
-  }, []);
+  }, [open]);
   async function toggle() {
     if (powered === null) return;
     const next = !powered;
@@ -1171,7 +1183,9 @@ function LightingPanel({ onClose }) {
     }
   }
   return (
-    <div ref={panelRef} className="lighting-panel">
+    // (always there, hidden while closed, so opening it only shows it: its
+    // icons are already loaded, see DailyFocus)
+    <div ref={panelRef} className={`lighting-panel${open ? '' : ' closed'}`} aria-hidden={!open}>
       <div className="lighting-header">
         <div className="lighting-title">Lighting Control</div>
         <PowerToggle powered={powered} onToggle={toggle} disabled={powered === null} />
@@ -1484,13 +1498,28 @@ const TASKS_RELOAD_INTERVAL = 60 * 1000;
 // A task's custom icon: `icon` while not done and `doneIcon` once done,
 // both in full color, with the icons' usual shadow
 function CustomTaskIcon({ icon, doneIcon, done, placeClassName = '', burstTarget }) {
-  const name = done ? doneIcon : icon;
+  // Both icons are drawn, one over the other, each on its own layer, and
+  // only shown or not: the done one is ready the moment the task's tapped,
+  // rather than the Pi 3 drawing it first (see .task-icon-layer)
+  const layer = (name, shown, className) => (
+    <span className={`task-icon-layer ${className}`} style={{ opacity: shown ? 1 : TASK_ICON_HIDDEN }}>
+      <span className="task-icon-shadow">
+        <img className={`task-icon task-icon-custom ${iconClass(name)}`} src={iconUrl(name, 'color', 'custom')} alt="" />
+      </span>
+    </span>
+  );
   return (
-    <span className={`task-icon-shadow ${placeClassName}`} data-burst-target={burstTarget}>
-      <img className={`task-icon task-icon-custom ${iconClass(name)}`} src={iconUrl(name, 'color', 'custom')} alt="" />
+    <span className={`task-icon-place ${placeClassName}`} data-burst-target={burstTarget}>
+      {layer(icon, !done, 'task-icon-normal')}
+      {layer(doneIcon, done, 'task-icon-done')}
     </span>
   );
 }
+
+// How opaque the task icon not shown is: next to nothing, but not none, as
+// the browser doesn't draw (and so doesn't have ready) a layer that's
+// entirely see-through
+const TASK_ICON_HIDDEN = 0.01;
 
 // The days (0 is Sunday) the office task shows: Tuesday, Wednesday, Thursday
 // (also in server/LightAutomation.js, for the wake-up time, as is
@@ -1526,8 +1555,78 @@ function SleepEstimate({ wakeTime, office }) {
   );
 }
 
-// How long a task's celebration lasts (ms), matching index.css
+// A task's celebration (see useCelebration): its contents popping (scaled
+// up and back with a little bounce), a ring spreading out and fading, and a
+// circle of colored sparks flying out with it; TASK_BURST_MS in all
 const TASK_BURST_MS = 800;
+const TASK_POP_MS = 450;
+const taskPopScale = keyframes(
+  [
+    [0, 1],
+    [0.35, 1.25],
+    [1, 1],
+  ],
+  cubicBezier(0.3, 1.6, 0.5, 1),
+);
+const TASK_RING_MS = 600;
+const taskSparksOpacity = keyframes(
+  [
+    [0, 1],
+    [0.6, 1],
+    [1, 0],
+  ],
+  EASE_OUT,
+);
+
+/**
+ * Runs a task's celebration each time `burst` changes (to anything but 0):
+ * `contentRef`'s element pops, and `burstRef`'s (see TaskBurst) ring and
+ * sparks spread out and fade, moved `offset` ({ x, y } px, or null) from
+ * where they sit. Each is on its own layer while it moves (see
+ * frameAnimation.js), and only its transform and opacity change: the burst
+ * is always there, unseen, as adding it would change the outline of
+ * everything around it, which the Pi 3 repaints whole (the Today panel).
+ */
+function useCelebration(burst, contentRef, burstRef, offset) {
+  useLayoutEffect(() => {
+    if (!burst) return undefined;
+    const content = contentRef.current;
+    const [ring, sparks] = burstRef.current.children;
+    const move = offset ? `translate(${offset.x}px, ${offset.y}px) ` : '';
+    content.style.willChange = 'transform';
+    const stops = [
+      animate(TASK_POP_MS, (progress) => {
+        content.style.transform = progress < 1 ? `scale(${taskPopScale(progress)})` : '';
+      }),
+      animate(TASK_RING_MS, (progress) => {
+        const eased = EASE_OUT(progress);
+        ring.style.transform = `${move}scale(${0.3 + eased})`;
+        ring.style.opacity = 1 - eased;
+      }),
+      animate(TASK_BURST_MS, (progress) => {
+        sparks.style.transform = `${move}scale(${0.3 + 0.95 * EASE_OUT(progress)})`;
+        sparks.style.opacity = taskSparksOpacity(progress);
+      }),
+    ];
+    return () => {
+      stops.forEach((stop) => stop());
+      content.style.transform = '';
+      content.style.willChange = '';
+      ring.style.opacity = sparks.style.opacity = 0;
+    };
+  }, [burst]);
+}
+
+// The burst around a tapped task: its ring and sparks (see useCelebration),
+// unseen until then
+function TaskBurst({ burstRef, className = '', style }) {
+  return (
+    <span ref={burstRef} className={`task-burst ${className}`} style={style}>
+      <span className="task-burst-ring" />
+      <span className="task-burst-sparks" />
+    </span>
+  );
+}
 
 // A task's button: tapping it while not done marks it done (`onPress`) with
 // a celebration, its contents popping and a burst of sparks around them.
@@ -1536,16 +1635,12 @@ const TASK_BURST_MS = 800;
 function TaskButton({ done, onPress, title, burstTarget, below, children }) {
   // Each tap's number, which restarts the animations; 0 before any
   const [burst, setBurst] = useState(0);
-  const [bursting, setBursting] = useState(false);
-  // Where the burst is centered, in px from the button's top left, or null
-  // for the button's center
-  const [burstCenter, setBurstCenter] = useState(null);
+  // How far the burst is moved from the button's center (px), or null
+  const [burstOffset, setBurstOffset] = useState(null);
   const buttonRef = useRef(null);
-  useEffect(() => {
-    if (!bursting) return undefined;
-    const timer = setTimeout(() => setBursting(false), TASK_BURST_MS);
-    return () => clearTimeout(timer);
-  }, [burst, bursting]);
+  const contentRef = useRef(null);
+  const burstRef = useRef(null);
+  useCelebration(burst, contentRef, burstRef, burstOffset);
   const press = () => {
     if (done) return;
     const button = buttonRef.current;
@@ -1554,29 +1649,22 @@ function TaskButton({ done, onPress, title, burstTarget, below, children }) {
     if (target) {
       const outer = button.getBoundingClientRect();
       const inner = target.getBoundingClientRect();
-      setBurstCenter({
-        left: inner.left + inner.width / 2 - outer.left,
-        top: inner.top + inner.height / 2 - outer.top,
+      setBurstOffset({
+        x: inner.left + inner.width / 2 - (outer.left + outer.width / 2),
+        y: inner.top + inner.height / 2 - (outer.top + outer.height / 2),
       });
     } else {
-      setBurstCenter(null);
+      setBurstOffset(null);
     }
     onPress();
     setBurst(burst + 1);
-    setBursting(true);
   };
   return (
     <button ref={buttonRef} type="button" className={`task${done ? ' done' : ''}`} onClick={press} title={title}>
-      <span key={burst} className={`task-content${bursting ? ' task-pop' : ''}`}>
+      <span ref={contentRef} className="task-content">
         {children}
       </span>
-      {bursting && (
-        <span
-          key={`burst-${burst}`}
-          className="task-burst"
-          style={burstCenter ? { left: `${burstCenter.left}px`, top: `${burstCenter.top}px` } : undefined}
-        />
-      )}
+      <TaskBurst burstRef={burstRef} />
       {/* Anything shown under the button, out of the layout */}
       {below && <span className="task-below">{below}</span>}
     </button>
@@ -1586,8 +1674,10 @@ function TaskButton({ done, onPress, title, burstTarget, below, children }) {
 // The daily focus's color (Google Calendar's Peacock, see server/CalendarManager.js)
 const FOCUS_COLOR = '#039be5';
 // How far above the bottom of the screen the focus's options end, at most
-// (a share of the screen's width, as vw)
-const FOCUS_LIST_BOTTOM_GAP = 0.02;
+// (px): far enough that their shadow (--panel-outer-shadow, 8px down with a
+// 32px blur) stays on screen too, as anything reaching past the screen's
+// edge makes the Pi 3 repaint the whole page as it appears and goes
+const FOCUS_LIST_BOTTOM_GAP = 44;
 
 /**
  * The day's focus, between the Today title and the tasks: a panel drawn as a
@@ -1612,13 +1702,13 @@ function DailyFocus({ focus, options, today, changeable, onChoose }) {
   }, [open]);
   // The list ends above the bottom of the screen at most (see
   // FOCUS_LIST_BOTTOM_GAP), scrolling within itself if it's longer, so the
-  // page doesn't grow to scroll
+  // page doesn't grow to scroll (hidden or not, see below)
   useLayoutEffect(() => {
     const list = listRef.current;
-    if (!open || !list) return;
-    const bottom = window.innerHeight - FOCUS_LIST_BOTTOM_GAP * window.innerWidth;
+    if (!list) return;
+    const bottom = window.innerHeight - FOCUS_LIST_BOTTOM_GAP;
     list.style.maxHeight = `${Math.max(0, bottom - list.getBoundingClientRect().top)}px`;
-  }, [open]);
+  }, [open, focus]);
   const greeting = !focus && today;
   return (
     <div className="daily-focus-place">
@@ -1645,8 +1735,11 @@ function DailyFocus({ focus, options, today, changeable, onChoose }) {
           </>
         )}
       </button>
-      {open && (
-        <div ref={listRef} className="daily-focus-list">
+      {/* Always there, hidden while closed, so opening it only shows it:
+          its emoji are already loaded (each arriving would have the Pi 3
+          repaint it again) */}
+      <div ref={listRef} className={`daily-focus-list${open ? '' : ' closed'}`} aria-hidden={!open}>
+        <div className="daily-focus-options">
           {options.map((option) => (
             <button
               type="button"
@@ -1661,7 +1754,7 @@ function DailyFocus({ focus, options, today, changeable, onChoose }) {
             </button>
           ))}
         </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -1975,11 +2068,9 @@ const TASK_DONE_COLOR = '#22c55e';
 // celebration burst on it, and the row takes a soft green tint.
 function GoogleTaskRow({ task, onComplete }) {
   const [burst, setBurst] = useState(0);
-  useEffect(() => {
-    if (!burst) return undefined;
-    const timer = setTimeout(() => setBurst(0), TASK_BURST_MS);
-    return () => clearTimeout(timer);
-  }, [burst]);
+  const checkRef = useRef(null);
+  const burstRef = useRef(null);
+  useCelebration(burst, checkRef, burstRef, null);
   const press = () => {
     if (task.done) return;
     onComplete(task);
@@ -1997,10 +2088,10 @@ function GoogleTaskRow({ task, onComplete }) {
       {task.done && <span className="calendar-event-fill" style={{ backgroundColor: TASK_DONE_COLOR }} />}
       {task.done && <span className="calendar-event-edge" />}
       <span className="calendar-task-check-place">
-        <span key={burst} className={`calendar-task-check${burst ? ' task-pop' : ''}`}>
+        <span ref={checkRef} className="calendar-task-check">
           {task.done && <span className="calendar-task-checkmark">✓</span>}
         </span>
-        {burst ? <span key={`burst-${burst}`} className="task-burst calendar-task-burst" /> : null}
+        <TaskBurst burstRef={burstRef} className="calendar-task-burst" />
       </span>
       <span className="calendar-task-title">
         <EmojiText text={task.title} />
@@ -2053,6 +2144,32 @@ function calendarHasEvents(calendar, offset) {
 // An hour's label on the calendar, such as "9 am"
 const hourLabel = (hour) => calendarHourFormat.format(new Date(hour)).replace(' ', '\u00a0').toLowerCase();
 
+// How long the refresh icon takes to turn once while it spins (ms)
+const REFRESH_SPIN_MS = 800;
+
+// The refresh icon, turning while `spinning`: on its own layer, turned each
+// animation frame (see frameAnimation.js), with the sky held meanwhile
+function RefreshIcon({ spinning }) {
+  const iconRef = useRef(null);
+  useEffect(() => {
+    if (!spinning) return undefined;
+    const icon = iconRef.current;
+    const start = performance.now();
+    let frame = 0;
+    const turn = (now) => {
+      holdSky(REFRESH_SPIN_MS);
+      icon.style.transform = `rotate(${((Math.max(0, now - start) / REFRESH_SPIN_MS) % 1) * 360}deg)`;
+      frame = requestAnimationFrame(turn);
+    };
+    frame = requestAnimationFrame(turn);
+    return () => {
+      cancelAnimationFrame(frame);
+      icon.style.transform = '';
+    };
+  }, [spinning]);
+  return <img ref={iconRef} className={iconClass(REFRESH_ICON)} src={fluentWhiteIconUrl(REFRESH_ICON)} alt="Refresh" />;
+}
+
 // The calendar's refresh button, spinning while `refreshing`, centered over
 // the hour labels (see index.css). `className` places it up and down, with
 // `style` for any measured position.
@@ -2065,7 +2182,7 @@ function CalendarRefresh({ refreshing, onRefresh, className, style }) {
         onClick={onRefresh}
         title="Refresh the calendar"
       >
-        <img className={iconClass(REFRESH_ICON)} src={fluentWhiteIconUrl(REFRESH_ICON)} alt="Refresh" />
+        <RefreshIcon spinning={refreshing} />
       </button>
     </div>
   );
@@ -2164,7 +2281,7 @@ function CalendarDay({ calendar, offset, refreshing, onRefresh }) {
           onClick={onRefresh}
           title="Refresh the calendar"
         >
-          <img className={iconClass(REFRESH_ICON)} src={fluentWhiteIconUrl(REFRESH_ICON)} alt="Refresh" />
+          <RefreshIcon spinning={refreshing} />
         </button>
       </div>
     );
@@ -2496,8 +2613,8 @@ export default function App() {
   const latestSkyRequest = useRef(0);
   // Whether a sky request is waiting for its answer, so updates don't pile up
   const skyRequestPending = useRef(false);
-  // How fast the clouds move, which takes effect straight away
-  const [cloudSpeed, setCloudSpeed] = useState(DEFAULT_CLOUD_SPEED);
+  // How far the clouds move with each new sky, from the next one on
+  const [cloudStep, setCloudStep] = useState(DEFAULT_CLOUD_STEP);
   // Whether test play is stepping the sky color time forward
   const [playing, setPlaying] = useState(false);
   // Exposure for the sky gradient, and what's in its inputs until applied
@@ -3033,9 +3150,21 @@ export default function App() {
     return () => clearInterval(timer);
   }, [asleep]);
 
+  // Every tap holds the sky's redraws for a moment (see skyHold.js), so what
+  // the tap changes is drawn without waiting behind one
+  useEffect(() => {
+    const hold = () => holdSky(HOLD_AFTER_TAP);
+    window.addEventListener('pointerdown', hold, true);
+    window.addEventListener('pointerup', hold, true);
+    return () => {
+      window.removeEventListener('pointerdown', hold, true);
+      window.removeEventListener('pointerup', hold, true);
+    };
+  }, []);
+
   // Live (the sky for now, while awake and not testing), the sky comes from
   // the server's stream: one long-lived connection, as on the Pi 3's Chromium
-  // a request every second leaks memory. Test times in Settings fetch it.
+  // a request every few seconds leaks memory. Test times in Settings fetch it.
   const streaming = !asleep && !playing && skyTime === '';
   useEffect(() => {
     if (!streaming) return undefined;
@@ -3105,7 +3234,7 @@ export default function App() {
         hazeContrast={hazeContrast}
         moon={moon}
         stars={stars}
-        cloudSpeed={cloudSpeed}
+        cloudStep={cloudStep}
         paused={asleep}
         precipitation={precipitation}
       />
@@ -3143,7 +3272,7 @@ export default function App() {
           <span className="lighting-logo">L|L</span>
         </button>
       )}
-      {!uiHidden && lightingOpen && <LightingPanel onClose={closeLighting} />}
+      {!uiHidden && <LightingPanel open={lightingOpen} onClose={closeLighting} />}
       <button type="button" className="corner-button bedtime-toggle" onClick={goToSleep} title="Bedtime">
         <img className={iconClass('bedtime-mode')} src={whiteIconUrl('bedtime-mode')} alt="Bedtime: turn the screen off" />
       </button>
@@ -3324,15 +3453,15 @@ export default function App() {
           </p>
           <p>
             <label>
-              Cloud speed:{' '}
+              Cloud step:{' '}
               <RangeInput
                 min="0"
-                max={MAX_CLOUD_SPEED}
-                step="0.1"
-                value={cloudSpeed}
-                onChange={(event) => setCloudSpeed(Number(event.target.value))}
+                max={MAX_CLOUD_STEP}
+                step="0.5"
+                value={cloudStep}
+                onChange={(event) => setCloudStep(Number(event.target.value))}
               />{' '}
-              {cloudSpeed.toFixed(1)}×
+              {cloudStep.toFixed(1)} px
             </label>
             <CloudMotionNote />
           </p>

@@ -3,6 +3,7 @@ import { createCpuCloudRenderer } from './cpuClouds.js';
 import { PRECIPITATION_INTERVAL, PRECIPITATION_SCALE, createPrecipitation } from './precipitation.js';
 import moonUrl from '../assets/images/moon.png';
 import {
+  CLOUD_STEP_SPEED,
   cloudShaderData,
   computeRows,
   drawStars,
@@ -41,10 +42,10 @@ const MOON_CLOUD_LIGHT_LEAST = 0.01;
 // just moves with it
 const MOON_REDRAW_MOVE = 8;
 // The sky is painted (fades shown, the canvases updated) at most this often
-// (ms): 30 times a second, every other frame of the display. Each paint has
-// the browser composite the whole screen again, which is the Pi 3's limit,
-// so painting half as often keeps frames steady rather than spiking.
-const PAINT_INTERVAL = 1000 / 30;
+// (ms): 4 times a second. Each paint has the browser composite the whole
+// screen again, ~135 ms on the Pi 3, so fades (new cloud shapes coming in)
+// are shown in a few steps rather than keeping it busy throughout.
+const PAINT_INTERVAL = 250;
 // (frames come every 16.7 ms, so a frame this much early still counts)
 const PAINT_SLACK = 4;
 
@@ -54,8 +55,6 @@ const STAR_GLOW_WIDTH = 240;
 // at most this often (ms): they change too slowly to see in between, and
 // working them out takes a while on the Pi 3
 const STAR_TWILIGHT_INTERVAL = 5000;
-// How often a new frame of cloud motion is drawn (ms), faded in over the same time
-const CLOUD_INTERVAL = 250;
 // The clouds are drawn with WebGL (with motion) if the GPU draws a cloud frame
 // within this many ms, leaving it plenty of time for everything else between
 // frames; otherwise they're drawn on the CPU
@@ -101,9 +100,18 @@ const PANEL_SKY_HEIGHTS = { lighting: 0.88, focus: 0.53 };
  * is skipped where nothing has changed: the stars are only worked out during
  * twilight (see starsKey), and the clouds only redrawn when their data changes.
  *
- * Cloud motion moves the clouds on every CLOUD_INTERVAL ms. With WebGL, each
- * step is a new frame faded in over that time; on the CPU, each layer's band
- * is slid across.
+ * The clouds move on a step with each new sky (see setCloudStep), rather than
+ * smoothly: they drift slowly enough not to need it, and each move is a
+ * full-screen redraw on the Pi 3. With WebGL, each step is a new frame; on
+ * the CPU, each layer's band is slid across.
+ *
+ * On the CPU, the sky and haze are drawn into the clouds' canvas (see
+ * mergedLayers), so the page composites one full-screen canvas instead of
+ * three. The sky can only go in when nothing is shown between it and the
+ * clouds (the stars and moon); the haze can whenever the clouds are shown.
+ *
+ * While held (see setHeld and skyHold.js), nothing is redrawn: new scenes
+ * wait, and are drawn once the hold ends.
  */
 export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClouds = false }) {
   const requestFrame = globalThis.requestAnimationFrame
@@ -150,17 +158,29 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
     cloudFrameMs: null,
     // The cloud data last drawn, to tell when it changes
     cloudData: null,
-    // The clouds' own clock (seconds), which sets where they've drifted to,
-    // and the real time it was last moved on at
+    // The clouds' own clock (seconds), which sets where they've drifted to.
+    // It moves on with each new sky (the sky's colors, as last seen), so the
+    // clouds move cloudStep screen pixels (see CLOUD_STEP_SPEED); and how
+    // much cloud time has passed per real second lately, and when it last
+    // moved on (ms)
     cloudClock: Date.now() / 1000,
-    cloudClockUpdated: Date.now() / 1000,
-    cloudSpeed: 1,
-    // While paused (bedtime), the clouds stop moving and their clock stops,
-    // so they carry on from where they were
+    cloudStep: 1,
+    skySeen: null,
+    cloudRate: 0,
+    cloudSteppedAt: 0,
+    // While paused (bedtime), the clouds stop moving
     paused: false,
     animating: false,
-    animationTimer: 0,
     animationFrame: 0,
+    // While held, nothing is redrawn; a scene that came meanwhile is drawn
+    // once the hold ends
+    held: false,
+    drawPending: false,
+    // Which of the sky and haze the clouds' canvas was last given to draw
+    // (see mergedLayers), and whether one leaving it has had its own canvas
+    // shown yet
+    backdropDrawn: null,
+    leavingShown: false,
     // When the sky was last painted (ms, see PAINT_INTERVAL)
     paintedAt: -Infinity,
     // Rain and snow, and the timer drawing them while there's any (and the
@@ -184,10 +204,15 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
   function reportLayers() {
     const { stars, moon } = state;
     const { pixelRatio } = state.props.windowSize;
-    const { low, mid, high } = state.props.settings.clouds;
+    // (the sky and haze are hidden once the clouds' canvas has drawn them,
+    // and shown again as soon as they stop going in, see paint)
+    const merged = mergedLayers();
+    const drawn = state.backdropDrawn ?? {};
     const layers = {
+      sky: !(merged.sky && drawn.sky),
+      haze: !(merged.haze && drawn.haze),
       stars: stars.key !== 'day' && stars.key !== undefined,
-      clouds: low > 0 || mid > 0 || high > 0,
+      clouds: cloudsShown(),
       precipitation: state.precipitation.active(),
       moon:
         moon.key !== null
@@ -203,10 +228,15 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
   // Shows each fade as of now, continuing each animation frame until they're
   // done, at most every PAINT_INTERVAL (waiting a frame if it's too soon).
   // The sky and haze are columns 1 pixel wide that the page stretches, so
-  // fading them only changes those columns; the stars and moon are on their
-  // own canvases, only changed when they are.
+  // fading them only changes those columns (on the CPU they're also drawn
+  // into the clouds' canvas, see mergedLayers); the stars and moon are on
+  // their own canvases, only changed when they are.
   function paint() {
     const { sky, haze, cloudRenderer } = state;
+    if (state.held) {
+      state.animationFrame = 0;
+      return;
+    }
     const now = performance.now();
     if (now - state.paintedAt < PAINT_INTERVAL - PAINT_SLACK) {
       state.animationFrame = requestFrame(paint);
@@ -215,16 +245,61 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
     state.paintedAt = now;
     let fading = false;
 
-    for (const layer of [sky, haze]) {
+    const changed = { sky: false, haze: false };
+    for (const [name, layer] of Object.entries({ sky, haze })) {
       if (layer.changes.length === 0) continue;
       const progress = fadeProgress(layer.fade, now);
       blendLayer(layer, progress);
       layer.canvas.getContext('2d').putImageData(layer.image, 0, 0);
+      changed[name] = true;
       if (progress < 1) fading = true;
     }
+    // On the CPU, the sky and haze go into the clouds' canvas too, when
+    // they can (see mergedLayers). One that stops going in has its own
+    // canvas shown first, and is taken out of the clouds' canvas a paint
+    // later, so neither shows without it in between.
+    if (state.cloudMode === 'cpu') {
+      const merged = mergedLayers();
+      const drawn = state.backdropDrawn ?? { sky: false, haze: false };
+      const leaving = (drawn.sky && !merged.sky) || (drawn.haze && !merged.haze);
+      if (leaving && !state.leavingShown) {
+        reportLayers();
+        state.leavingShown = true;
+        fading = true;
+      } else if (changed.sky || changed.haze || merged.sky !== drawn.sky || merged.haze !== drawn.haze) {
+        cloudRenderer.setBackdrop(
+          merged.sky ? sky.image : null,
+          merged.haze ? haze.image : null,
+          changed.sky || merged.sky !== drawn.sky,
+          changed.haze || merged.haze !== drawn.haze,
+        );
+        state.backdropDrawn = merged;
+        state.leavingShown = false;
+      }
+    }
     if (cloudRenderer?.paint(now)) fading = true;
+    // (after drawing, so a canvas is only hidden once what replaces it is drawn)
+    reportLayers();
 
     state.animationFrame = fading ? requestFrame(paint) : 0;
+  }
+
+  // Whether the clouds' canvas is shown: while there are clouds
+  function cloudsShown() {
+    const { low, mid, high } = state.props.settings.clouds;
+    return low > 0 || mid > 0 || high > 0;
+  }
+
+  // Which of the sky and haze are drawn into the clouds' canvas rather than
+  // their own (on the CPU, once the clouds are drawn): { sky, haze }. The
+  // haze goes over the clouds, so it can whenever they're shown; the sky goes
+  // under them, so only while nothing is shown between (the stars and moon).
+  function mergedLayers() {
+    const ready = state.cloudMode === 'cpu' && cloudsShown() && state.cloudRenderer.ready();
+    return {
+      sky: ready && state.stars.key === 'day' && state.moon.key === null,
+      haze: ready,
+    };
   }
 
   function startPainting() {
@@ -232,14 +307,21 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
     state.animationFrame = requestFrame(paint);
   }
 
-  // The time to show the clouds at, from their own clock. While they're
-  // moving, it runs at the cloud speed times real time, so changing the speed
-  // changes how fast they move on from where they are, without a jump.
-  function cloudTime() {
-    const now = Date.now() / 1000;
-    if (state.animating && !state.paused) state.cloudClock += (now - state.cloudClockUpdated) * state.cloudSpeed;
-    state.cloudClockUpdated = now;
-    return state.cloudClock;
+  // Moves the clouds' clock on a step if `settings` has a new sky (and the
+  // clouds move: not while paused, nor with WebGL too slow to redraw them),
+  // so the reference layer moves cloudStep screen pixels. Returns whether it
+  // moved.
+  function stepClouds(settings) {
+    const sky = JSON.stringify(settings.colors);
+    const newSky = state.skySeen !== null && sky !== state.skySeen;
+    state.skySeen = sky;
+    if (!newSky || state.paused || !state.animating || !(state.cloudStep > 0)) return false;
+    const step = state.cloudStep / (CLOUD_STEP_SPEED * state.props.windowSize.height);
+    const now = performance.now();
+    if (state.cloudSteppedAt) state.cloudRate = step / Math.max(0.25, (now - state.cloudSteppedAt) / 1000);
+    state.cloudSteppedAt = now;
+    state.cloudClock += step;
+    return true;
   }
 
   function sizes() {
@@ -250,19 +332,6 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
       cloudWidth: Math.max(1, Math.round(width * RENDER_SCALE)),
       cloudHeight: Math.max(1, Math.round(height * RENDER_SCALE)),
     };
-  }
-
-  // Starts or stops cloud motion, which runs while there are cloud layers to
-  // move and it isn't paused (and, with WebGL, while the GPU is fast enough)
-  function updateAnimation() {
-    const { low, mid, high } = state.props.settings.clouds;
-    const run = state.animating && !state.paused && (low > 0 || mid > 0 || high > 0);
-    if (run && !state.animationTimer) {
-      state.animationTimer = setInterval(() => drawCloudFrame(CLOUD_INTERVAL), CLOUD_INTERVAL);
-    } else if (!run && state.animationTimer) {
-      clearInterval(state.animationTimer);
-      state.animationTimer = 0;
-    }
   }
 
   // Starts or stops drawing rain and snow, which runs while there's any and
@@ -279,6 +348,8 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
     if (run && !state.precipitationTimer) {
       state.precipitationDrawn = performance.now();
       state.precipitationTimer = setInterval(() => {
+        // (not while held, see setHeld)
+        if (state.held) return;
         const now = performance.now();
         // (at most a quarter second at once, so a long stall doesn't jump)
         precipitation.frame(Math.min(0.25, (now - state.precipitationDrawn) / 1000));
@@ -292,16 +363,12 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
     if (!precipitation.active()) precipitation.frame(0);
   }
 
-  // Moves the clouds on: with WebGL, a new frame faded in over `duration` ms
-  function drawCloudFrame(duration) {
+  // Moves the clouds on to the clouds' clock (`settings.time`): with WebGL, a
+  // new frame faded in over `duration` ms
+  function moveClouds(settings, duration) {
     if (!state.cloudRenderer || !state.cloudData) return;
-    const time = cloudTime();
-    if (state.cloudMode === 'webgl') {
-      state.cloudRenderer.drawFrame({ ...state.props.settings, time }, time, duration);
-    } else {
-      state.cloudRenderer.step(time);
-    }
-    startPainting();
+    if (state.cloudMode === 'webgl') state.cloudRenderer.drawFrame(settings, settings.time, duration);
+    else state.cloudRenderer.step(settings.time);
   }
 
   /**
@@ -324,7 +391,12 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
       return;
     }
     state.cloudMode = 'cpu';
-    state.cloudRenderer = createCpuCloudRenderer(canvases.clouds, createCanvas, () => state.cloudSpeed);
+    state.cloudRenderer = createCpuCloudRenderer(
+      canvases.clouds,
+      createCanvas,
+      () => state.cloudRate,
+      () => state.held,
+    );
     state.cloudRenderer.setOnFrame(startPainting);
     state.animating = true;
   }
@@ -539,9 +611,15 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
 
   // Draws every layer for the current settings, fading them in
   function drawAll() {
+    if (state.held) {
+      state.drawPending = true;
+      return;
+    }
+    state.drawPending = false;
     const started = performance.now();
     const { fadeDuration } = state.props;
-    const settings = { ...state.props.settings, time: cloudTime() };
+    const cloudsMoved = stepClouds(state.props.settings);
+    const settings = { ...state.props.settings, time: state.cloudClock };
     const { cloudHeight } = sizes();
 
     // Every layer's colors by height, worked out once at the clouds' resolution
@@ -565,8 +643,8 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
     // (on the CPU, it's put on as the clouds are drawn, so needn't recolor them)
     if (state.cloudMode !== 'cpu') cloudData.uniforms.moonLight = moonLight;
     const cloudsRedrawn = drawClouds(settings, cloudData, rows, fadeDuration);
+    if (cloudsMoved && !(cloudsRedrawn && state.cloudMode === 'webgl')) moveClouds(settings, fadeDuration);
     if (state.cloudMode === 'cpu') state.cloudRenderer.setMoonLight(moonLight, moonCloudFalloff, moonCloudColor);
-    updateAnimation();
     updatePrecipitation();
     startPainting();
     reportLayers();
@@ -611,25 +689,33 @@ export function createSkyRenderer({ canvases, createCanvas, report, forceCpuClou
       drawAll();
     },
 
-    // Sets how fast the clouds move, as a multiple of their normal drift
-    setCloudSpeed(speed) {
-      cloudTime();
-      state.cloudSpeed = speed;
+    // Sets how far the clouds move with each new sky, in screen pixels (see
+    // CLOUD_STEP_SPEED)
+    setCloudStep(pixels) {
+      state.cloudStep = pixels;
     },
 
     // Pauses or resumes cloud motion. New scenes are still drawn while paused.
     setPaused(paused) {
-      cloudTime();
       state.paused = paused;
-      if (state.props) {
-        updateAnimation();
-        updatePrecipitation();
-      }
+      if (state.props) updatePrecipitation();
+    },
+
+    /**
+     * Holds or releases the sky's redraws (see skyHold.js): while held,
+     * nothing is redrawn (new scenes, fades, rain and snow, new cloud shapes
+     * all wait), leaving the CPU and the screen to the page
+     */
+    setHeld(held) {
+      if (held === state.held) return;
+      state.held = held;
+      if (held || !state.props) return;
+      if (state.drawPending) drawAll();
+      else startPainting();
     },
 
     dispose() {
       cancelFrame(state.animationFrame);
-      clearInterval(state.animationTimer);
       clearInterval(state.precipitationTimer);
     },
   };
@@ -716,7 +802,7 @@ function setLayerFrame(layer, next, width, height, duration, instantChange = 0) 
   layer.from = new Float32Array(count * 4);
   layer.to = new Float32Array(count * 4);
   layer.target = next;
-  layer.fade = { start: performance.now(), duration: largest <= instantChange ? 1 : duration };
+  layer.fade = { start: performance.now(), duration: largest <= instantChange ? 1 : Math.max(1, duration) };
   let k = 0;
   for (let i = 0; i < next.length; i += 4) {
     if (!differs(i)) continue;

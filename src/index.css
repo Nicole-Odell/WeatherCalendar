@@ -433,7 +433,8 @@ a {
    as far below it as the buttons are apart, in the panels' style */
 .lighting-panel {
   position: fixed;
-  z-index: 1;
+  /* (over the corner buttons, so nothing is painted after it, see below) */
+  z-index: 2;
   top: calc(var(--corner-inset) + var(--corner-button-size) + var(--corner-button-gap));
   right: calc(var(--corner-inset) + var(--corner-button-size) + var(--corner-button-gap));
   box-sizing: border-box;
@@ -454,6 +455,22 @@ a {
   backdrop-filter: var(--panel-backdrop);
   font-size: 4vw;
   text-shadow: var(--calendar-text-shadow);
+}
+
+/* Kept on the page while closed, hidden (see LightingPanel in App.jsx), and
+   while open on its own layer, so opening and closing it doesn't make the
+   Pi 3 repaint the page under it. (Chromium 74 also puts anything painted
+   after a will-change layer on layers of their own, in case it moves, so
+   these are painted last: the lighting panel over the corner buttons, the
+   focus's options last in the Today panel.) */
+.lighting-panel.closed,
+.daily-focus-list.closed {
+  visibility: hidden;
+}
+
+.lighting-panel:not(.closed),
+.daily-focus-list:not(.closed) {
+  will-change: transform;
 }
 
 /* Its title at the top left, and the power button at the top right */
@@ -985,9 +1002,8 @@ a {
 }
 
 /* Its options, over it (top to top, as wide as it) and what's below, in the
-   lighting panel's style: a row for each, scrolling within it (with no
-   scroll bar, as the page) when there are more than fit above the bottom of
-   the screen (its height capped by the page) */
+   lighting panel's style: a row for each, scrolling (with no scroll bar, as
+   the page) when there are more than fit above the bottom of the screen */
 .daily-focus-list {
   position: absolute;
   z-index: 2;
@@ -1004,6 +1020,16 @@ a {
   -webkit-backdrop-filter: var(--panel-backdrop);
   backdrop-filter: var(--panel-backdrop);
   text-shadow: var(--calendar-text-shadow);
+  /* (its height capped by the page; the options scroll inside, see below) */
+  display: flex;
+  flex-direction: column;
+}
+
+/* The options, scrolling within the panel's padding: a plain rectangle,
+   not the panel's rounded one, which the Pi 3 can only clip to with an
+   extra pass over the screen on every redraw while it's open */
+.daily-focus-options {
+  min-height: 0;
   overflow-y: auto;
   /* (scrolling to its end doesn't go on to scroll the page) */
   overscroll-behavior: contain;
@@ -1049,6 +1075,11 @@ a {
 .task,
 .task:active {
   position: relative;
+  /* On a layer of its own, painted over what's around it: its contents and celebration move on
+     layers of their own (see .task-content), and anything painted after
+     them that they overlap would be moved onto layers too, repainting it */
+  z-index: 1;
+  will-change: transform;
   /* (the 2px they've always had, so their layout is the same in every flavor) */
   border: 2px solid transparent;
   background: transparent;
@@ -1057,32 +1088,21 @@ a {
 }
 
 /* A task's contents, which pop when it's tapped */
+/* Its contents, which pop when it's tapped: on their own layer, so the pop
+   (run frame by frame, see useCelebration in App.jsx) doesn't repaint the
+   page around them */
 .task-content {
   display: inline-block;
   vertical-align: middle;
   line-height: 0;
   white-space: nowrap;
-}
-
-.task-pop {
-  animation: task-pop 0.45s cubic-bezier(0.3, 1.6, 0.5, 1);
-}
-
-@keyframes task-pop {
-  0% {
-    transform: scale(1);
-  }
-  35% {
-    transform: scale(1.25);
-  }
-  100% {
-    transform: scale(1);
-  }
+  will-change: transform;
 }
 
 /* The burst around a tapped task: a ring spreading out and fading, and a
-   circle of colored sparks flying out with it (0.8s in all, as
-   TASK_BURST_MS in App.jsx) */
+   circle of colored sparks flying out with it (run frame by frame, see
+   useCelebration in App.jsx), each on its own layer, and always there,
+   unseen until then */
 .task-burst {
   position: absolute;
   top: 50%;
@@ -1093,8 +1113,7 @@ a {
   pointer-events: none;
 }
 
-.task-burst::before {
-  content: '';
+.task-burst-ring {
   position: absolute;
   top: 0;
   left: 0;
@@ -1103,11 +1122,12 @@ a {
   box-sizing: border-box;
   border: 0.12em solid rgba(255, 255, 255, 0.9);
   border-radius: 50%;
-  animation: task-ring 0.6s ease-out forwards;
+  transform: scale(0.3);
+  opacity: 0;
+  will-change: transform;
 }
 
-.task-burst::after {
-  content: '';
+.task-burst-sparks {
   position: absolute;
   top: 50%;
   left: 50%;
@@ -1124,32 +1144,34 @@ a {
     -1.06em 1.06em 0 #22c55e,
     -1.5em 0 0 #60a5fa,
     -1.06em -1.06em 0 #f472b6;
-  animation: task-sparks 0.8s ease-out forwards;
+  transform: scale(0.3);
+  opacity: 0;
+  will-change: transform;
 }
 
-@keyframes task-ring {
-  from {
-    transform: scale(0.3);
-    opacity: 1;
-  }
-  to {
-    transform: scale(1.3);
-    opacity: 0;
-  }
+/* Each custom icon's place: its normal and done drawings, one over the
+   other, each on its own layer so showing one or the other doesn't make the
+   Pi 3 draw anything (see CustomTaskIcon in App.jsx). The shadow is drawn
+   inside each layer, as a filter on a layer itself would take an extra pass
+   over the screen on every redraw. */
+.task-icon-place {
+  position: relative;
+  display: inline-block;
+  vertical-align: middle;
+  line-height: 0;
 }
 
-@keyframes task-sparks {
-  0% {
-    transform: scale(0.3);
-    opacity: 1;
-  }
-  60% {
-    opacity: 1;
-  }
-  100% {
-    transform: scale(1.25);
-    opacity: 0;
-  }
+.task-icon-layer {
+  display: inline-block;
+  vertical-align: middle;
+  line-height: 0;
+  will-change: transform;
+}
+
+.task-icon-done {
+  position: absolute;
+  top: 0;
+  left: 0;
 }
 
 /* Each icon's place, which carries the icons' usual shadow */
@@ -1534,6 +1556,9 @@ a {
 
 .calendar-task-check-place {
   position: relative;
+  /* (painted over the title beside it, which the circle's pop and burst
+     would otherwise move onto a layer too, see useCelebration in App.jsx) */
+  z-index: 1;
   flex: none;
   margin-right: 0.5em;
   line-height: 0;
@@ -1695,6 +1720,9 @@ img.emoji {
 
 .calendar-refresh {
   position: absolute;
+  /* (painted over the calendar beside it, which its spinning icon's layer
+     would otherwise move onto a layer too, see .calendar-refresh img) */
+  z-index: 1;
   top: -2vw;
   left: 50%;
   width: 4vw;
@@ -1722,19 +1750,9 @@ img.emoji {
   height: 2.8vw;
   margin: -1.4vw 0 0 -1.4vw;
   filter: var(--icon-shadow-small);
-}
-
-.calendar-refresh.refreshing img {
-  animation: calendar-refresh-spin 0.8s linear infinite;
-}
-
-@keyframes calendar-refresh-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
+  /* On its own layer, so spinning it (frame by frame, see RefreshIcon in
+     App.jsx) doesn't repaint the page around it */
+  will-change: transform;
 }
 
 /* Bedtime: black over everything while the screen is off; a tap wakes it */

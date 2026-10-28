@@ -33,6 +33,9 @@ const CLOUD_LAYERS = [
   { name: 'mid', bottom: 3, top: 8, height: 5.5, speed: 0.0009, frequency: [2.5, 5], offset: 100 },
   { name: 'high', bottom: 8, top: 10, height: 9, speed: 0.0015, frequency: [1.5, 10], offset: 200 },
 ];
+// The speed of the layer cloud steps are measured by (the low layer's): a
+// step of N pixels moves it N screen pixels, and the others in proportion
+export const CLOUD_STEP_SPEED = CLOUD_LAYERS[0].speed;
 // How fast cloud shapes change as the noise shifts through itself, in noise
 // units per second. Cloud motion depends only on the clock time, so it stays
 // smooth whatever other settings change.

@@ -390,7 +390,7 @@ export function createCloudRenderer(canvas) {
         drawBlend(1, frames.from, frames.to);
         hasFrame = true;
       }
-      fade = { start: performance.now(), duration };
+      fade = { start: performance.now(), duration: Math.max(1, duration) };
     },
 
     // Shows the fade as of `now`; returns whether it's still going

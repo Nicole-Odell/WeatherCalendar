@@ -24,11 +24,9 @@ const MARGIN_STEP = 16;
 const POOL_SIZE = 4;
 // Steps in the gradient of moonlight on the clouds (see setMoonLight)
 const MOON_LIGHT_STOPS = 8;
-// The clouds are only drawn again for motion once some band has drifted this
-// many pixels (of the clouds' image, a quarter of the screen's resolution)
-// since they were last drawn: about a screen pixel. Slow clouds then cost far
-// fewer redraws, each of which makes the Pi 3 composite the whole screen.
-const MIN_DRAWN_DRIFT = 0.25;
+// While the sky is held (see skyHold.js), how often shape work checks
+// whether it can carry on (ms)
+const HELD_RECHECK_MS = 100;
 
 /**
  * Draws the cloud layers on the CPU, with motion, into `canvas` (2D). Each
@@ -39,11 +37,17 @@ const MIN_DRAWN_DRIFT = 0.25;
  * SHAPE_REFRESH seconds of cloud time, new shapes are worked out in short
  * pieces (so nothing waits on them) and faded in.
  *
- * `createCanvas()` makes an off-screen canvas, and `cloudSpeed()` gives the
- * current cloud speed (to know how far the clouds drift while shapes are
- * worked out). It has the same paint(now) as the WebGL renderer in cloudsGL.js.
+ * The sky and haze can be drawn into the same canvas (see setBackdrop), under
+ * and over the clouds, so the page composites one full-screen canvas rather
+ * than three: on the Pi 3 each costs ~15–40 ms of every redraw of the screen.
+ *
+ * `createCanvas()` makes an off-screen canvas, `cloudRate()` gives how many
+ * seconds of cloud time pass per real second (to know how far the clouds
+ * drift while shapes are worked out), and `isHeld()` whether the sky is held
+ * (see skyHold.js), when shape work waits. It has the same paint(now) as the
+ * WebGL renderer in cloudsGL.js.
  */
-export function createCpuCloudRenderer(canvas, createCanvas, cloudSpeed) {
+export function createCpuCloudRenderer(canvas, createCanvas, cloudRate, isHeld) {
   const state = {
     // The scene from setScene: settings (with `time`, the cloud clock), the
     // row colors for it, and the image size
@@ -75,6 +79,10 @@ export function createCpuCloudRenderer(canvas, createCanvas, cloudSpeed) {
     moonLight: null,
     moonGradient: null,
     moonCanvas: null,
+    // The sky and haze drawn under and over the clouds (see setBackdrop):
+    // columns 1 pixel wide, stretched across, or null for none
+    sky: null,
+    haze: null,
   };
 
   /*
@@ -280,7 +288,7 @@ export function createCpuCloudRenderer(canvas, createCanvas, cloudSpeed) {
     // worked out and faded in
     const fastest = Math.max(0, ...bands.map((band) => band.speed));
     const nextShapesSeconds = ((state.shapesMs ?? FIRST_SHAPES_MS) + SHAPE_FADE) / 1000;
-    const lifetime = SHAPE_REFRESH + nextShapesSeconds * cloudSpeed();
+    const lifetime = SHAPE_REFRESH + nextShapesSeconds * cloudRate();
     const margin = Math.ceil((fastest * height * lifetime * 1.25 + 4) / MARGIN_STEP) * MARGIN_STEP;
     const frame = createFrame(width + margin, height, margin, clock, bands, null);
     const shapes = {
@@ -296,6 +304,11 @@ export function createCpuCloudRenderer(canvas, createCanvas, cloudSpeed) {
     const work = () => {
       // A newer job replaces this one
       if (state.job !== job) return;
+      // (it waits while the sky is held, leaving the CPU to the page)
+      if (isHeld()) {
+        setTimeout(work, HELD_RECHECK_MS);
+        return;
+      }
       const sliceEnd = performance.now() + SLICE_MS;
       while (job.nextRow < height && performance.now() < sliceEnd) {
         const endRow = Math.min(height, job.nextRow + SLICE_ROWS);
@@ -324,6 +337,30 @@ export function createCpuCloudRenderer(canvas, createCanvas, cloudSpeed) {
 
   // Called when a new frame is ready to be shown (set by setOnFrame)
   let onFrame = () => {};
+
+  // A 1-pixel-wide canvas showing `image` (a column, or null for none),
+  // reusing `column` (the one shown before) if it has one
+  function columnCanvas(column, image) {
+    if (!image) return null;
+    const target = column ?? createCanvas();
+    if (target.width !== image.width || target.height !== image.height) {
+      target.width = image.width;
+      target.height = image.height;
+    }
+    target.getContext('2d').putImageData(image, 0, 0);
+    return target;
+  }
+
+  // Puts the haze over the clouds as drawn, and the sky under them
+  function drawBackdrop() {
+    const context = canvas.getContext('2d');
+    if (state.haze) context.drawImage(state.haze, 0, 0, canvas.width, canvas.height);
+    if (state.sky) {
+      context.globalCompositeOperation = 'destination-over';
+      context.drawImage(state.sky, 0, 0, canvas.width, canvas.height);
+      context.globalCompositeOperation = 'source-over';
+    }
+  }
 
   // Recolors the frames with shapes for the current scene, fading the change
   // in over `duration` ms unless it's too small to see
@@ -384,10 +421,7 @@ export function createCpuCloudRenderer(canvas, createCanvas, cloudSpeed) {
      */
     step(clock) {
       state.clock = clock;
-      if (state.to && !state.changed) {
-        const fastest = Math.max(0, ...state.to.bands.map((band) => band.speed));
-        if (Math.abs(clock - state.drawnClock) * fastest * state.to.height >= MIN_DRAWN_DRIFT) state.changed = true;
-      }
+      if (clock !== state.drawnClock) state.changed = true;
       const { to } = state;
       if (!state.job && to?.shapes) {
         const drifted = Math.max(0, ...to.bands.map((band) => (clock - to.clock) * band.speed * to.height));
@@ -405,6 +439,7 @@ export function createCpuCloudRenderer(canvas, createCanvas, cloudSpeed) {
       state.drawnClock = state.clock;
       drawBlend(canvas, progress);
       lightByMoon(progress);
+      drawBackdrop();
       if (progress >= 1 && state.from) {
         retire(state.from);
         state.from = null;
@@ -434,6 +469,23 @@ export function createCpuCloudRenderer(canvas, createCanvas, cloudSpeed) {
         state.moonGradient = gradient;
       }
       state.changed = true;
+    },
+
+    /**
+     * Sets the sky to draw under the clouds and the haze to draw over them:
+     * each an ImageData 1 pixel wide (stretched across), or null for none.
+     * Only the ones passed as changed (`skyChanged`, `hazeChanged`) are taken
+     * up again.
+     */
+    setBackdrop(sky, haze, skyChanged = true, hazeChanged = true) {
+      if (skyChanged || !sky !== !state.sky) state.sky = sky ? columnCanvas(state.sky, sky) : null;
+      if (hazeChanged || !haze !== !state.haze) state.haze = haze ? columnCanvas(state.haze, haze) : null;
+      state.changed = true;
+    },
+
+    // Whether there are clouds to show yet (shapes take a moment at first)
+    ready() {
+      return Boolean(state.to);
     },
 
     // Sets what to call when a new frame is ready, to start painting

@@ -6,9 +6,9 @@ import { createSkyRenderer } from './skyRenderer.js';
  * Messages from the page (see SkyCanvas.jsx):
  * - { type: 'init', canvases, forceCpuClouds }: the page's canvases, handed
  *   over with transferControlToOffscreen, and createSkyRenderer's option
- * - { type: 'scene', props }, { type: 'cloudSpeed', speed } and
- *   { type: 'paused', paused }: as for createSkyRenderer's setScene,
- *   setCloudSpeed and setPaused
+ * - { type: 'scene', props }, { type: 'cloudStep', pixels },
+ *   { type: 'paused', paused } and { type: 'held', held }: as for
+ *   createSkyRenderer's setScene, setCloudStep, setPaused and setHeld
  * It posts back the renderer's reports ({ status }).
  */
 let renderer = null;
@@ -23,9 +23,11 @@ self.onmessage = ({ data }) => {
     });
   } else if (data.type === 'scene') {
     renderer.setScene(data.props);
-  } else if (data.type === 'cloudSpeed') {
-    renderer.setCloudSpeed(data.speed);
+  } else if (data.type === 'cloudStep') {
+    renderer.setCloudStep(data.pixels);
   } else if (data.type === 'paused') {
     renderer.setPaused(data.paused);
+  } else if (data.type === 'held') {
+    renderer.setHeld(data.held);
   }
 };

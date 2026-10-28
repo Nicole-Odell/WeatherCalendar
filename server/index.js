@@ -307,8 +307,10 @@ app.get('/api/time-of-day/moon-events', (req, res) => {
   res.json({ events: TimeOfDayManager.GetMoonEvents() });
 });
 
-// How often the sky stream sends the sky colors (ms)
-const SKY_STREAM_INTERVAL = 1000;
+// How often the sky stream sends the sky colors (ms): every 3 seconds, as
+// each redraw of the sky is a full-screen redraw on the Pi 3 (see
+// SKY_UPDATE_INTERVAL in src/App.jsx)
+const SKY_STREAM_INTERVAL = 3000;
 
 // What the sky needs of the moon's position: its altitude, how its picture is
 // turned (its north, clockwise from up) and which way its lit side faces
@@ -361,7 +363,7 @@ app.get('/api/sky/colors', async (req, res) => {
 
 // The sky (see skyAt) for now, sent every SKY_STREAM_INTERVAL as server-sent
 // events for as long as the page stays connected. One long-lived connection
-// instead of a request every second: on the Pi 3's Chromium 74, each request
+// instead of a request every few seconds: on the Pi 3's Chromium 74, each request
 // leaves memory behind, which adds up to the whole Pi's memory within a day.
 app.get('/api/sky/stream', (req, res) => {
   res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
